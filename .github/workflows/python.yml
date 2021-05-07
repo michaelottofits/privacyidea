@@ -136,12 +136,15 @@ jobs:
         path: ./cov_reports
 
     - name: Combine coverage reports
+      id: combine-cov
+      continue-on-error: true
       working-directory: ./cov_reports
       run: |
         coverage combine coverage-*/.coverage
         coverage xml
 
     - name: Codecov upload
+      if: steps.combine-cov.outcome == 'success'
       uses: codecov/codecov-action@v1
       with:
         file: ./cov_reports/coverage.xml
