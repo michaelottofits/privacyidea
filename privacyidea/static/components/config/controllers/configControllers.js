@@ -586,7 +586,7 @@ myApp.controller("configController", ["$scope", "$location", "$rootScope",
     };
 
     // TODO: This information needs to be fetched from the server
-    $scope.availableResolverTypes = ['passwdresolver', 'ldapresolver', 'sqlresolver', 'scimresolver', 'httpresolver'];
+    $scope.availableResolverTypes = ['passwdresolver', 'ldapresolver', 'sqlresolver', 'scimresolver', 'httpresolver', 'keycloakresolver'];
     // TODO: This information needs to be fetched from the server
     $scope.availableMachineResolverTypes = ['hosts', 'ldap'];
     // TODO: This information needs to be fetched from the server
@@ -1192,6 +1192,56 @@ myApp.controller("HTTPResolverController", ["$scope", "ConfigFactory", "$state",
       var resolver = data.result.value[$scope.resolvername];
       $scope.params = resolver.data;
       $scope.params.type = "httpresolver";
+    });
+  }
+
+  $scope.setResolver = function() {
+    ConfigFactory.setResolver($scope.resolvername, $scope.params, function(
+      data
+    ) {
+      $scope.set_result = data.result.value;
+      $scope.getResolvers();
+      $state.go("config.resolvers.list");
+    });
+  };
+
+  $scope.testResolver = function() {
+    ConfigFactory.testResolver($scope.params, function(data) {
+      if (data.result.value === true) {
+        inform.add(data.detail.description, { type: "success", ttl: 10000 });
+      } else {
+        inform.add(data.detail.description, { type: "danger", ttl: 10000 });
+      }
+    });
+  };
+}]);
+
+
+
+myApp.controller("KEYCLOAKResolverController", ["$scope", "ConfigFactory", "$state",
+                                            "$stateParams", "inform",
+                                            function($scope, ConfigFactory,
+                                                     $state, $stateParams,
+                                                     inform) {
+  $scope.params = {
+    type: "keycloakresolver",
+    keycloakurl: "",
+    realm: "",
+    client: "",
+    secret: "",
+    user: false,
+    password: ""
+  };
+
+
+  $scope.resolvername = $stateParams.resolvername;
+  if ($scope.resolvername) {
+    /* If we have a resolvername, we do an Edit
+         and we need to fill all the $scope.params */
+    ConfigFactory.getResolver($scope.resolvername, function(data) {
+      var resolver = data.result.value[$scope.resolvername];
+      $scope.params = resolver.data;
+      $scope.params.type = "keycloakresolver";
     });
   }
 
