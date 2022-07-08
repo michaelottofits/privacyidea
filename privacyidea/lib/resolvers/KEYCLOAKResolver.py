@@ -222,8 +222,8 @@ class KEYCLOAKResolver(UserIdResolver):
             email = ""
             if "firstName" in u.keys():
                 firstname = u['firstName']
-            if "lastname" in u.keys():
-                lastname = u['lastname']
+            if "lastName" in u.keys():
+                lastname = u['lastName']
             if "email" in u.keys():
                 email = u['email']
             if "attributes" in u.keys():
@@ -320,7 +320,7 @@ def getUser(self, userid):
     email = ""
     if "firstName" in pi_single_user.keys():
         firstname = pi_single_user['firstName']
-    if "lastname" in pi_single_user.keys():
+    if "lastName" in pi_single_user.keys():
         lastname = pi_single_user['lastname']
     if "email" in pi_single_user.keys():
         email = pi_single_user['email']
