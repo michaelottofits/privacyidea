@@ -121,3 +121,4 @@ wrapt==1.14.1; python_version > '3.5'
 zipp==1.2.0; python_version <= '3.5'
 zipp==3.6.0; python_version == '3.6'
 zipp==3.8.0; python_version > '3.6'
+keycloak_wrapper==2.22.0;
