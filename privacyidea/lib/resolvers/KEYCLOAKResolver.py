@@ -28,10 +28,11 @@
 #
 import json
 import logging
+import requests
+import os.path
 from typing import Any
 from dataclasses import dataclass
-from keycloak_wrapper import access_token, get_user
-from keycloak_wrapper import realm_users
+from urllib.parse import urljoin
 
 from .UserIdResolver import UserIdResolver
 
@@ -41,6 +42,9 @@ __name__ = "KEYCLOAK_RESOLVER"
 
 log = logging.getLogger(__name__)
 
+USER_TOKEN = "realms/{realm-name}/protocol/openid-connect/token"
+ADMIN_REALM_USERS = "admin/realms/{realm-name}/users"
+ADMIN_GET_USER = "admin/realms/{realm-name}/users/{id}"
 
 @dataclass
 class KeycloakToken:
@@ -53,7 +57,7 @@ class KeycloakToken:
     scope: str
 
     @staticmethod
-    def from_dict(obj: Any) -> 'Root':
+    def from_dict(obj: Any) -> 'KeycloakToken':
         _access_token = str(obj.get("access_token"))
         _expires_in = int(obj.get("expires_in"))
         _refresh_expires_in = int(obj.get("refresh_expires_in"))
@@ -106,7 +110,9 @@ class KEYCLOAKResolver(UserIdResolver):
         "client": 1,
         "secret": 1,
         "user": 1,
-        "password": 0
+        "password": 1,
+        "ssl_verify": 0,
+        "ssl_ca_pem_path": 1
     }
 
     def __init__(self):
@@ -150,6 +156,8 @@ class KEYCLOAKResolver(UserIdResolver):
             'secret': 'string',
             'user': 'string',
             'password': 'string',
+            'ssl_verify': 'bool',
+            'ssl_ca_pem_path': 'string',
         }
         return {typ: descriptor}
 
@@ -202,9 +210,18 @@ class KEYCLOAKResolver(UserIdResolver):
         query_user = param.get('user')
         query_password = param.get('password')
 
-        token = access_token(keycloak_url, realm, client, secret, query_user, query_password)
+        """ standard is validate certificate  """
+        ssl_verify = True
+        if not param.get('ssl_verify'):
+            ssl_verify = False
+        else:
+            if os.path.exists(param.get('ssl_ca_pem_path')):
+                ssl_verify = param.get('ssl_ca_pem_path')
+
+
+        token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
         keycloak_token = KeycloakToken.from_dict(token)
-        users = realm_users(keycloak_url, realm, keycloak_token.access_token)
+        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify)
 
         data = json.dumps(users)
         user = json.loads(data)
@@ -304,10 +321,18 @@ def getUser(self, userid):
     query_user = param.get('user')
     query_password = param.get('password')
 
-    token = access_token(keycloak_url, realm, client, secret, query_user, query_password)
+    """ standard is validate certificate  """
+    ssl_verify = True
+    if not param.get('ssl_verify'):
+        ssl_verify = False
+    else:
+        if os.path.exists(param.get('ssl_ca_pem_path')):
+            ssl_verify = param.get('ssl_ca_pem_path')
+
+    token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
     keycloak_token = KeycloakToken.from_dict(token)
 
-    keycloak_user = get_user(keycloak_url, realm, keycloak_token.access_token, userid)
+    keycloak_user = get_user(keycloak_url, realm, keycloak_token.access_token, userid, ssl_verify)
     data = json.dumps(keycloak_user)
     pi_single_user = json.loads(data)
 
@@ -321,7 +346,7 @@ def getUser(self, userid):
     if "firstName" in pi_single_user.keys():
         firstname = pi_single_user['firstName']
     if "lastName" in pi_single_user.keys():
-        lastname = pi_single_user['lastname']
+        lastname = pi_single_user['lastName']
     if "email" in pi_single_user.keys():
         email = pi_single_user['email']
 
@@ -341,3 +366,66 @@ def getUser(self, userid):
 
     userdata = json.dumps(pi_user, default=lambda o: o.__dict__, sort_keys=False, indent=4)
     return json.loads(userdata)
+
+def access_token(keycloak_url, realm, client_id, client_secret, username, password, ssl_verify):
+    """
+    keycloak_url: KEYCLOAK URL (http://xxxxx/auth)
+    realm: KEYCLOAK REALM NAME
+    client_id: KEYCLOAK CLIENT NAME
+    client_secret: KEYCLOAK CLIENT SECRET
+    username: KEYCLOAK user's USERNAME
+    password: KEYCLOAK user's PASSWORD
+    ssl_verify: ssl path to pem ca file or false
+    """
+    params = {"realm-name": realm}
+    payload = {"username": username, "password": password, "grant_type": "password", "client_id": client_id,
+               "client_secret": client_secret}
+    response = requests.post(url=urljoin(keycloak_url, USER_TOKEN).format(**params), data=payload,
+                             verify=ssl_verify).json()
+    return response
+
+def get_user(keycloak_url, realm, admin_token, username, ssl_verify):
+    """
+    :param keycloak_url: KEYCLOAK URL (http://xxxxx/auth)
+    :param realm: KEYCLOAK REALM NAME
+    :param admin_token: REALM Admin access token
+    :param username: keycloak username
+    :param ssl_verify: ssl path to pem ca file or false
+    :return: KEYCLOAK USER ID
+    """
+    user_id = user_keycloak_id(keycloak_url, realm, admin_token, username, ssl_verify)
+    params = {"realm-name": realm, "id": user_id}
+    headers = {"Authorization": "Bearer " + admin_token}
+    response = requests.get(url=urljoin(keycloak_url, ADMIN_GET_USER).format(**params), headers=headers,
+                            verify=ssl_verify).json()
+    return response
+
+def user_keycloak_id(keycloak_url, realm, admin_token, username, ssl_verify):
+    """
+    :param keycloak_url: KEYCLOAK URL (http://xxxxx/auth)
+    :param realm: KEYCLOAK REALM NAME
+    :param admin_token: REALM Admin access token
+    :param username: keycloak username
+    :param ssl_verify: ssl path to pem ca file or false
+    :return: KEYCLOAK USER ID
+    """
+    users = realm_users(keycloak_url, realm, admin_token, ssl_verify)
+    for user in users:
+        this_user_name = json.dumps(user["username"]).strip('"')
+        if this_user_name == username:
+            return json.dumps(user["id"]).strip('"')
+    return None
+
+def realm_users(keycloak_url, realm, admin_token, ssl_verify):
+    """
+    :param keycloak_url: KEYCLOAK URL (http://xxxxx/auth)
+    :param realm:  KEYCLOAK REALM NAME
+    :param admin_token: REALM Admin access token
+    :param ssl_verify: ssl path to pem ca file or false
+    :return: list of realm users
+    """
+    params = {"realm-name": realm}
+    headers = {"Authorization": "Bearer " + admin_token}
+    response = requests.get(url=urljoin(keycloak_url, ADMIN_REALM_USERS).format(**params), headers=headers,
+                            verify=ssl_verify).json()
+    return response

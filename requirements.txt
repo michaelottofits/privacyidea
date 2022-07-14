@@ -58,7 +58,6 @@ importlib-resources==5.4.0; python_version == '3.6'
 ipaddress==1.0.23; python_version < '3.0'
 itsdangerous==1.1.0
 Jinja2==2.11.3
-keycloak_wrapper==0.2;
 ldap3==2.8.1
 lxml==4.8.0
 Mako==1.1.6; python_version <= '3.6'
@@ -122,3 +121,16 @@ wrapt==1.14.1; python_version > '3.5'
 zipp==1.2.0; python_version <= '3.5'
 zipp==3.6.0; python_version == '3.6'
 zipp==3.8.0; python_version > '3.6'
+
+pyparsing~=3.0.8
+cryptography~=37.0.2
+requests~=2.27.1
+PyJWT~=2.4.0
+setuptools~=60.2.0
+alembic~=1.7.7
+redis~=4.2.2
+PyYAML~=6.0
+qrcode~=7.3.1
+cbor2~=5.4.3
+pydash~=5.1.0
+beautifulsoup4~=4.11.1

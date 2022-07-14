@@ -16,13 +16,42 @@
             </div>
         </div>
         <div class="form-group row">
-            <label for="keycloak_url" class="col-sm-3 control-label text-right" translate>Endpoint (URL)</label>
+            <label for="keycloakurl" class="col-sm-3 control-label text-right" translate>Endpoint (URL)</label>
 
             <div class="col-sm-9">
-                <input type="keycloak_url" name="resolverfile" id="resolverfile" class="form-control" ng-model="params.keycloak_url" required
+                <input type="text" name="keycloakurl" id="keycloakurl" class="form-control" ng-model="params.keycloak_url" required
                     placeholder="http://keycloak.com:port/auth/" />
             </div>
         </div>
+        <div class="form-group"
+                ng-show="params.keycloak_url.toLowerCase().substring(0,5) === 'https' ||
+                         params.ssl_verify">
+
+                <label for="tls_verify"
+                    class="col-sm-3 control-label" translate>
+                    Verify HTTP TLS
+                </label>
+                <div class="col-sm-9">
+                    <input name="tls verify" id="tls_verify"
+                           ng-model="params.ssl_verify"
+                           type="checkbox"/>
+                    <p class="help-block" >
+                        Verify the TLS cerificate of the server.
+                    </p>
+                    <div class="well" ng-show="params.ssl_verify">
+                        <label for="tls_ca_file" class="control-label" translate>
+                            The file containing the CA certificate which signed the
+                            Https TLS certificate.
+                        </label>
+                        <input name="tls_ca_file" id="tls_ca_file"
+                               ng-model="params.ssl_ca_pem_path"
+                               type="text"
+                               class="form-control"
+                               ng-show="params.ssl_ca_pem_path"
+                               placeholder="/etc/privacyidea/https-ca.crt"/>
+                    </div>
+                </div>
+            </div>
         <div class="form-group row">
             <label for="realm" class="col-sm-3 control-label text-right"
                     translate>Realm</label>
@@ -38,7 +67,7 @@
                     translate>Client</label>
 
             <div class="col-sm-3">
-                <input name="client" class="form-control"
+                <input name="client" id='client' class="form-control"
                        ng-model="params.client" required
                        placeholder="clientid"/>
             </div>
@@ -46,7 +75,7 @@
         <div class="form-group row">
             <label for="secret" class="col-sm-3 control-label text-right" translate>Secret</label>
     
-            <div class="col-sm-3"><input name="secret" class="form-control"
+            <div class="col-sm-3"><input name="secret"  id='secret' class="form-control"
                 type="password"
                 autocomplete="new-password"
                 ng-model="params.secret"
@@ -54,19 +83,17 @@
             </div>   
         </div>
         <div class="form-group row">
-            <label for="user" class="col-sm-3 control-label text-right"
-                    translate>user</label>
+            <label for="user-keycloak" class="col-sm-3 control-label text-right" translate>user</label>
 
             <div class="col-sm-3">
-                <input name="user" class="form-control"
-                       ng-model="params.user" required
-                       placeholder="user"/>
+                <input name="user-keycloak"  id="user-keycloak" class="form-control"
+                       ng-model="params.user" required placeholder="user"/>
             </div>
         </div>
         <div class="form-group row">     
             <label for="password" class="col-sm-3 control-label text-right" translate>Password</label>
     
-            <div class="col-sm-3"><input name="password" class="form-control"
+            <div class="col-sm-3"><input name="password" id="password" class="form-control"
                 type="password"
                 autocomplete="new-password"
                 ng-model="params.password"
