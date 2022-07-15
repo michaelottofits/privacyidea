@@ -211,13 +211,8 @@ class KEYCLOAKResolver(UserIdResolver):
         query_password = param.get('password')
 
         """ standard is validate certificate  """
-        ssl_verify = True
-        if not param.get('ssl_verify'):
-            ssl_verify = False
-        else:
-            if os.path.exists(param.get('ssl_ca_pem_path')):
-                ssl_verify = param.get('ssl_ca_pem_path')
-
+        if param.get('ssl_verify'):
+            ssl_verify = param.get('ssl_ca_pem_path')
 
         token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
         keycloak_token = KeycloakToken.from_dict(token)
@@ -322,12 +317,8 @@ def getUser(self, userid):
     query_password = param.get('password')
 
     """ standard is validate certificate  """
-    ssl_verify = True
-    if not param.get('ssl_verify'):
-        ssl_verify = False
-    else:
-        if os.path.exists(param.get('ssl_ca_pem_path')):
-            ssl_verify = param.get('ssl_ca_pem_path')
+    if param.get('ssl_verify'):
+        ssl_verify = param.get('ssl_ca_pem_path')
 
     token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
     keycloak_token = KeycloakToken.from_dict(token)
