@@ -1225,14 +1225,22 @@ myApp.controller("KEYCLOAKResolverController", ["$scope", "ConfigFactory", "$sta
                                                      inform) {
   $scope.params = {
     type: "keycloakresolver",
-    keycloakurl: "",
+    keycloak_url: "",
     realm: "",
     client: "",
     secret: "",
-    user: false,
-    password: ""
+    user: "",
+    password: "",
+    ssl_verify: true,
+    ssl_ca_pem_path: ""
   };
 
+  $scope.$watch(
+    'params.ssl_verify;',
+    function (incomingValue) {
+        const value = (incomingValue + '').toLowerCase()
+        $scope.params.ssl_verify = value === 'true'
+    });
 
   $scope.resolvername = $stateParams.resolvername;
   if ($scope.resolvername) {
