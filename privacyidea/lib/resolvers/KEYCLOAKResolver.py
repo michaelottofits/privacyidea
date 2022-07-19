@@ -29,7 +29,7 @@
 import json
 import logging
 import requests
-import os.path
+import orjson
 from typing import Any
 from dataclasses import dataclass
 from urllib.parse import urljoin
@@ -218,8 +218,8 @@ class KEYCLOAKResolver(UserIdResolver):
         keycloak_token = KeycloakToken.from_dict(token)
         users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify)
 
-        data = json.dumps(users)
-        user = json.loads(data)
+        data = orjson.dumps(users)
+        user = orjson.loads(data)
 
         user_list = []
 
