@@ -43,7 +43,7 @@ __name__ = "KEYCLOAK_RESOLVER"
 log = logging.getLogger(__name__)
 
 USER_TOKEN = "realms/{realm-name}/protocol/openid-connect/token"
-ADMIN_REALM_USERS = "admin/realms/{realm-name}/users"
+ADMIN_REALM_USERS = "admin/realms/{realm-name}/users?q={query}&max={max-limit}"
 ADMIN_GET_USER = "admin/realms/{realm-name}/users/{id}"
 
 @dataclass
@@ -210,16 +210,26 @@ class KEYCLOAKResolver(UserIdResolver):
         query_user = param.get('user')
         query_password = param.get('password')
 
+
+        conditions = []
+        if searchDict is None:
+            searchDict = {}
+        for key in searchDict.keys():
+            column = key
+            value = searchDict.get(key)
+
+
         """ standard is validate certificate  """
         if param.get('ssl_verify'):
             ssl_verify = param.get('ssl_ca_pem_path')
 
         token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
         keycloak_token = KeycloakToken.from_dict(token)
-        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify)
+        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify, column + "%3A" +
+                            value.replace("*", ""), '100')
 
-        data = orjson.dumps(users)
-        user = orjson.loads(data)
+        data = json.dumps(users)
+        user = json.loads(data)
 
         user_list = []
 
@@ -407,16 +417,19 @@ def user_keycloak_id(keycloak_url, realm, admin_token, username, ssl_verify):
             return json.dumps(user["id"]).strip('"')
     return None
 
-def realm_users(keycloak_url, realm, admin_token, ssl_verify):
+def realm_users(keycloak_url, realm, admin_token, ssl_verify, query, max_limit):
     """
     :param keycloak_url: KEYCLOAK URL (http://xxxxx/auth)
     :param realm:  KEYCLOAK REALM NAME
     :param admin_token: REALM Admin access token
     :param ssl_verify: ssl path to pem ca file or false
+    :param query: query value
+    :param max_limit: max result
     :return: list of realm users
     """
-    params = {"realm-name": realm}
+    params = {"realm-name": realm, "query": query, "max-limit": max_limit, }
     headers = {"Authorization": "Bearer " + admin_token}
-    response = requests.get(url=urljoin(keycloak_url, ADMIN_REALM_USERS).format(**params), headers=headers,
+    url = urljoin(keycloak_url, ADMIN_REALM_USERS).format(**params)
+    response = requests.get(url, headers=headers,
                             verify=ssl_verify).json()
     return response
