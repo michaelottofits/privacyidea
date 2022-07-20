@@ -1232,7 +1232,8 @@ myApp.controller("KEYCLOAKResolverController", ["$scope", "ConfigFactory", "$sta
     user: "",
     password: "",
     ssl_verify: true,
-    ssl_ca_pem_path: ""
+    ssl_ca_pem_path: "",
+    limit: "500"
   };
 
   $scope.$watch(

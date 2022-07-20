@@ -112,7 +112,8 @@ class KEYCLOAKResolver(UserIdResolver):
         "user": 1,
         "password": 1,
         "ssl_verify": 0,
-        "ssl_ca_pem_path": 1
+        "ssl_ca_pem_path": 1,
+        "limit": 1
     }
 
     def __init__(self):
@@ -158,6 +159,7 @@ class KEYCLOAKResolver(UserIdResolver):
             'password': 'string',
             'ssl_verify': 'bool',
             'ssl_ca_pem_path': 'string',
+            'limit': int,
         }
         return {typ: descriptor}
 
@@ -210,6 +212,7 @@ class KEYCLOAKResolver(UserIdResolver):
         secret = param.get('secret')
         query_user = param.get('user')
         query_password = param.get('password')
+        query_limit = param.get('limit')
 
         keymap = {
             'userid': 'id',
@@ -236,7 +239,7 @@ class KEYCLOAKResolver(UserIdResolver):
 
         token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
         keycloak_token = KeycloakToken.from_dict(token)
-        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify, query, '100')
+        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify, query, str(query_limit))
 
         data = json.dumps(users)
         user = json.loads(data)
