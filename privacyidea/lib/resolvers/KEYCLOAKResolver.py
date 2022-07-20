@@ -213,6 +213,7 @@ class KEYCLOAKResolver(UserIdResolver):
         query_user = param.get('user')
         query_password = param.get('password')
         query_limit = param.get('limit')
+        ssl_verify = param.get('ssl_verify')
 
         keymap = {
             'userid': 'id',
@@ -235,6 +236,7 @@ class KEYCLOAKResolver(UserIdResolver):
                     query += column + "%3A" + value + " "
 
         """ standard is validate certificate  """
+
         if param.get('ssl_verify'):
             ssl_verify = param.get('ssl_ca_pem_path')
 
@@ -339,6 +341,7 @@ def getUser(self, userid):
     secret = param.get('secret')
     query_user = param.get('user')
     query_password = param.get('password')
+    ssl_verify = param.get('ssl_verify')
 
     """ standard is validate certificate  """
     if param.get('ssl_verify'):
