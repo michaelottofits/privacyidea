@@ -242,8 +242,8 @@ class KEYCLOAKResolver(UserIdResolver):
         keycloak_token = KeycloakToken.from_dict(token)
         users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify, query, str(query_limit))
 
-        data = json.dumps(users)
-        user = json.loads(data)
+        data = orjson.dumps(users)
+        user = orjson.loads(data)
 
         user_list = []
 
