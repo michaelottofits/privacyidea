@@ -378,12 +378,18 @@ def getUser(self, userid):
             gender = user_attributes['gender'][0]
         if "description" in user_attributes.keys():
             description = user_attributes['description'][0]
+    success = {}
+    desc = ""
+    try:
+        pi_user = PiUser(pi_single_user['username'], pi_single_user['id'], description, phone, mobile,
+                         email, firstname, lastname, gender)
+        userdata = json.dumps(pi_user, default=lambda o: o.__dict__, sort_keys=False, indent=4)
+        success = json.loads(userdata)
+        return success
+    except Exception as e:
+        desc = "failed: {0!s}".format(e)
+        return success
 
-    pi_user = PiUser(pi_single_user['username'], pi_single_user['id'], description, phone, mobile,
-                     email, firstname, lastname, gender)
-
-    userdata = json.dumps(pi_user, default=lambda o: o.__dict__, sort_keys=False, indent=4)
-    return json.loads(userdata)
 
 def access_token(keycloak_url, realm, client_id, client_secret, username, password, ssl_verify):
     """
@@ -427,7 +433,7 @@ def user_keycloak_id(keycloak_url, realm, admin_token, username, ssl_verify):
     :param ssl_verify: ssl path to pem ca file or false
     :return: KEYCLOAK USER ID
     """
-    users = realm_users(keycloak_url, realm, admin_token, ssl_verify)
+    users = realm_users(keycloak_url, realm, admin_token, ssl_verify, "username%3A" + username, "1")
     for user in users:
         this_user_name = json.dumps(user["username"]).strip('"')
         if this_user_name == username:
