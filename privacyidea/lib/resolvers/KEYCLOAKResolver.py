@@ -196,6 +196,7 @@ class KEYCLOAKResolver(UserIdResolver):
         """
         return getUser(self, userid)
 
+
     def getUserList(self, searchDict=None):
         """
         Since it is an HTTP resolver,
@@ -210,14 +211,24 @@ class KEYCLOAKResolver(UserIdResolver):
         query_user = param.get('user')
         query_password = param.get('password')
 
+        keymap = {
+            'userid': 'id',
+            'username': 'username',
+            'description': 'description',
+            'phone': 'phone',
+            'mobile': 'mobile',
+            'email': 'email',
+            'givenname': 'firstName',
+            'surname': 'lastName',
+            'gender': 'gender',
+        }
 
-        conditions = []
-        if searchDict is None:
-            searchDict = {}
+        query = ""
         for key in searchDict.keys():
-            column = key
-            value = searchDict.get(key)
-
+            if not searchDict.get(key) == "*":
+                column = keymap.get(key)
+                value = searchDict.get(key).replace("*", "")
+                query += column + "%3A" + value + " "
 
         """ standard is validate certificate  """
         if param.get('ssl_verify'):
@@ -225,8 +236,7 @@ class KEYCLOAKResolver(UserIdResolver):
 
         token = access_token(keycloak_url, realm, client, secret, query_user, query_password, ssl_verify)
         keycloak_token = KeycloakToken.from_dict(token)
-        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify, column + "%3A" +
-                            value.replace("*", ""), '100')
+        users = realm_users(keycloak_url, realm, keycloak_token.access_token, ssl_verify, query, '100')
 
         data = json.dumps(users)
         user = json.loads(data)
