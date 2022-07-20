@@ -227,11 +227,12 @@ class KEYCLOAKResolver(UserIdResolver):
         }
 
         query = ""
-        for key in searchDict.keys():
-            if not searchDict.get(key) == "*":
-                column = keymap.get(key)
-                value = searchDict.get(key).replace("*", "")
-                query += column + "%3A" + value + " "
+        if searchDict is not None:
+            for key in searchDict.keys():
+                if not searchDict.get(key) == "*":
+                    column = keymap.get(key)
+                    value = searchDict.get(key).replace("*", "")
+                    query += column + "%3A" + value + " "
 
         """ standard is validate certificate  """
         if param.get('ssl_verify'):
