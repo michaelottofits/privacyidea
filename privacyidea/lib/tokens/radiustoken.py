@@ -139,14 +139,6 @@ class RadiusTokenClass(RemoteTokenClass):
     def update(self, param):
         # New value
         radius_identifier = getParam(param, "radius.identifier")
-        token_kind = getParam(param, "tokenkind")
-        if token_kind == "virtual":
-            self.add_tokeninfo("tokenkind", 'virtual')
-        if token_kind == "hardware":
-            self.add_tokeninfo("tokenkind", 'hardware')
-        if token_kind == "software":
-            self.add_tokeninfo("tokenkind", 'software')
-
         self.add_tokeninfo("radius.identifier", radius_identifier)
 
         # old values
