@@ -1,0 +1,133 @@
+<div ng-controller="KEYCLOAKResolverController">
+
+    <h2 class="form-signin-heading" ng-show="resolvername" translate>Edit Keycloak Resolver {{ resolvername }}</h2>
+
+    <h2 class="form-signin-heading" ng-hide="resolvername" translate>Create a new Keycloak Resolver</h2>
+
+    <form name="formResolverAddKeycloak" role="form" validate>
+
+        <div class="form-group row">
+            <label for="resolvername" class="col-sm-3 control-label text-right" translate>Resolver name</label>
+
+            <div class="col-sm-9">
+                <input name="resolvername" id="resolvername" class="form-control" ng-model="resolvername" required
+                    placeholder="resolver1" pattern="{{ inputNamePatterns.withoutTest.pattern }}"
+                    title="{{ inputNamePatterns.withoutTest.title | translate }}" autofocus />
+            </div>
+        </div>
+        <div class="form-group row">
+            <label for="keycloakurl" class="col-sm-3 control-label text-right" translate>Endpoint (URL)</label>
+
+            <div class="col-sm-9">
+                <input type="text" name="keycloakurl" id="keycloakurl" class="form-control" ng-model="params.keycloak_url" required
+                    placeholder="http://keycloak.com:port/auth/" />
+            </div>
+        </div>
+        <div class="form-group"
+                ng-show="params.keycloak_url.toLowerCase().substring(0,5) === 'https' ||
+                         params.ssl_verify">
+
+                <label for="tls_verify"
+                    class="col-sm-3 control-label" translate>
+                    Verify HTTP TLS
+                </label>
+                <div class="col-sm-9">
+                    <input name="tls verify" id="tls_verify"
+                           ng-model="params.ssl_verify"
+                           type="checkbox"/>
+                    <p class="help-block" >
+                        Verify the TLS cerificate of the server.
+                    </p>
+                    <div class="well" ng-show="params.ssl_verify">
+                        <label for="tls_ca_file" class="control-label" translate>
+                            The file containing the CA certificate which signed the
+                            Https TLS certificate.
+                        </label>
+                        <input name="tls_ca_file" id="tls_ca_file"
+                               ng-model="params.ssl_ca_pem_path"
+                               type="text"
+                               class="form-control"
+                               ng-show="params.ssl_verify"
+                               placeholder="/etc/privacyidea/https-ca.crt"/>
+                    </div>
+                </div>
+            </div>
+        <div class="form-group row">
+            <label for="limit" class="col-sm-3 control-label text-right"
+                    translate>Limit</label>
+
+            <div class="col-sm-3">
+                <input name="limit" id="limit" class="form-control"
+                       ng-model="params.limit" required
+                       placeholder="500"/>
+            </div>
+        </div>
+        <div class="form-group row">
+            <label for="realm" class="col-sm-3 control-label text-right"
+                    translate>Realm</label>
+
+            <div class="col-sm-3">
+                <input name="realm" id="realm" class="form-control"
+                       ng-model="params.realm" required
+                       placeholder="master"/>
+            </div>
+        </div>
+        <div class="form-group row">
+            <label for="client" class="col-sm-3 control-label text-right"
+                    translate>Client</label>
+
+            <div class="col-sm-3">
+                <input name="client" id='client' class="form-control"
+                       ng-model="params.client" required
+                       placeholder="clientid"/>
+            </div>
+        </div>
+        <div class="form-group row">
+            <label for="secret" class="col-sm-3 control-label text-right" translate>Secret</label>
+    
+            <div class="col-sm-3"><input name="secret"  id='secret' class="form-control"
+                type="password"
+                autocomplete="new-password"
+                ng-model="params.secret"
+                placeholder="******"/>
+            </div>   
+        </div>
+        <div class="form-group row">
+            <label for="user-keycloak" class="col-sm-3 control-label text-right" translate>user</label>
+
+            <div class="col-sm-3">
+                <input name="user-keycloak"  id="user-keycloak" class="form-control"
+                       ng-model="params.user" required placeholder="user"/>
+            </div>
+        </div>
+        <div class="form-group row">     
+            <label for="password" class="col-sm-3 control-label text-right" translate>Password</label>
+    
+            <div class="col-sm-3"><input name="password" id="password" class="form-control"
+                type="password"
+                autocomplete="new-password"
+                ng-model="params.password"
+                placeholder="******"/>
+            </div>
+        </div>
+        <div class="text-center" ng-show="showResult">
+            <label class="label" ng-class="{'label-success':result.result,
+                       'label-danger':!result.result}">
+                {{ result.description }}<span class="glyphicon glyphicon-remove" ng-click="showResult=false"></span>
+            </label>
+        </div>
+        <div class="container-fluid">
+            <div class="text-right">
+                <button ng-click="testResolver()" ng-disabled="formResolverAddKeycloak.$invalid" class="btn btn-success"
+                        translate>
+                        Test Keycloak Resolver
+                </button>
+                <button ng-click="setResolver()" ng-show="checkRight('resolverwrite')"
+                    ng-disabled="formResolverAddKeycloak.$invalid" class="btn btn-primary" translate>Save resolver
+                </button>
+            </div>
+        </div>
+
+    </form>
+
+</div>

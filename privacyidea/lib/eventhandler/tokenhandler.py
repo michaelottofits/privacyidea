@@ -661,6 +661,9 @@ class TokenEventHandler(BaseEventHandler):
                         init_param["email.identifier"] = handler_options.get("smtp_identifier")
                 elif tokentype == "motp":
                     init_param['motppin'] = handler_options.get("motppin")
+                elif tokentype == "radius":
+                    init_param['radius.user'] = user.login
+                    init_param['tokenkind'] = 'virtual'
 
             t = init_token(param=init_param, user=user)
             log.info("New token {0!s} enrolled.".format(t.token.serial))
