@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 2015-06-04 Create REDIS mock
            Cornelius Kölbel <cornelius@privacyidea.org>
@@ -19,16 +18,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from __future__ import (
-    absolute_import, print_function, division, unicode_literals
-)
-
 from collections import namedtuple
 
-try:
-    from collections import Sequence, Sized
-except ImportError:
-    from collections.abc import Sequence, Sized
+from collections.abc import Sequence, Sized
 
 from .smtpmock import get_wrapped
 

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA
 #  Jul 18, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -28,8 +26,9 @@ The code is tested in tests/test_lib_tokens_ssh
 import logging
 from privacyidea.lib import _
 from privacyidea.api.lib.utils import getParam
+from privacyidea.lib.error import TokenAdminError
 from privacyidea.lib.log import log_with
-from privacyidea.lib.tokenclass import TokenClass
+from privacyidea.lib.tokenclass import TokenClass, ROLLOUTSTATE, AUTHENTICATIONMODE
 from privacyidea.lib.policy import SCOPE, ACTION, GROUP
 
 log = logging.getLogger(__name__)
@@ -50,12 +49,12 @@ class SSHkeyTokenClass(TokenClass):
     SSH key. This can be used to manage SSH keys and retrieve the public ssh key
     to import it to authorized keys files.
     """
-    mode = ['authenticate']
+    mode = [AUTHENTICATIONMODE.AUTHENTICATE]
     using_pin = False
 
     def __init__(self, db_token):
         TokenClass.__init__(self, db_token)
-        self.set_type(u"sshkey")
+        self.set_type("sshkey")
 
     @staticmethod
     def get_class_type():
@@ -121,16 +120,25 @@ class SSHkeyTokenClass(TokenClass):
         self.token.save()
 
         getParam(param, "sshkey", required)
-            
+
         key_elem = param.get("sshkey").split(" ", 2)
-        if len(key_elem) != 3:
-            raise Exception("The key must consist of 'ssh-keytype BASE64 comment'")
-        if key_elem[0] not in ["ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256"]:
-            raise Exception("The keytype you specified is not supported.")
+        if key_elem[0] not in ["ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256",
+                               "sk-ecdsa-sha2-nistp256@openssh.com", "sk-ssh-ed25519@openssh.com"]:
+            self.token.rollout_state = ROLLOUTSTATE.BROKEN
+            self.token.save()
+            raise TokenAdminError("The keytype you specified is not supported.")
+
+        if len(key_elem) < 2:
+            self.token.rollout_state = ROLLOUTSTATE.BROKEN
+            self.token.save()
+            raise TokenAdminError("Missing key.")
 
         key_type = key_elem[0]
         key = key_elem[1]
-        key_comment = key_elem[2]
+        if len(key_elem) > 2:
+            key_comment = key_elem[2]
+        else:
+            key_comment = ""
         
         # convert key to hex
         self.add_tokeninfo("ssh_key", key, value_type="password")
@@ -153,4 +161,7 @@ class SSHkeyTokenClass(TokenClass):
         key_comment = ti.get("ssh_comment")
         # get the ssh key directly, otherwise it will not be decrypted
         sshkey = self.get_tokeninfo("ssh_key")
-        return u"{0!s} {1!s} {2!s}".format(key_type, sshkey, key_comment)
+        r = "{0!s} {1!s}".format(key_type, sshkey)
+        if key_comment:
+            r += " " + key_comment
+        return r

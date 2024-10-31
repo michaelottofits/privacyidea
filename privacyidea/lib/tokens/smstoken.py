@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA is a fork of LinOTP
 #  May 08, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -40,7 +38,7 @@
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-__doc__ = """The SMS token sends an SMS containing an OTP via some kind of
+"""The SMS token sends an SMS containing an OTP via some kind of
 gateway. The gateways can be an SMTP or HTTP gateway or the special sipgate
 protocol.
 The Gateways are defined in the SMSProvider Modules.
@@ -63,11 +61,11 @@ from privacyidea.lib.crypto import safe_compare
 from privacyidea.lib.smsprovider.SMSProvider import (get_sms_provider_class,
                                                      create_sms_instance,
                                                      get_smsgateway)
-from privacyidea.lib.tokens.hotptoken import VERIFY_ENROLLMENT_MESSAGE
+from privacyidea.lib.tokens.hotptoken import VERIFY_ENROLLMENT_MESSAGE, HotpTokenClass
 from json import loads
 from privacyidea.lib import _
 
-from privacyidea.lib.tokens.hotptoken import HotpTokenClass
+from privacyidea.lib.tokenclass import CHALLENGE_SESSION, AUTHENTICATIONMODE
 from privacyidea.models import Challenge
 from privacyidea.lib.decorators import check_token_locked
 import logging
@@ -164,10 +162,11 @@ class SmsTokenClass(HotpTokenClass):
 
 
     """
+    mode = [AUTHENTICATIONMODE.CHALLENGE]
+
     def __init__(self, db_token):
         HotpTokenClass.__init__(self, db_token)
-        self.set_type(u"sms")
-        self.mode = ['challenge']
+        self.set_type("sms")
         self.hKeyRequired = True
 
     @staticmethod
@@ -198,33 +197,35 @@ class SmsTokenClass(HotpTokenClass):
         res = {'type': 'sms',
                'title': _('SMS Token'),
                'description':
-                    _('SMS: Send a One Time Password to the users mobile '
-                      'phone.'),
+                   _('SMS: Send a One Time Password to the users mobile '
+                     'phone.'),
                'user': ['enroll'],
                # This tokentype is enrollable in the UI for...
                'ui_enroll': ["admin", "user"],
                'policy': {
                    SCOPE.AUTH: {
-                        SMSACTION.SMSTEXT: {
-                            'type': 'str',
-                            'desc': _('The text that will be send via SMS for '
-                                      'an SMS token. Use tags like {otp} and {serial} '
-                                      'as parameters.')},
-                        SMSACTION.SMSAUTO: {
-                            'type': 'bool',
-                            'desc': _('If set, a new SMS OTP will be sent '
-                                      'after successful authentication with '
-                                      'one SMS OTP.')},
+                       SMSACTION.SMSTEXT: {
+                           'type': 'str',
+                           'desc': _('The text that will be send via SMS for '
+                                     'an SMS token. Use tags like {otp} and {serial} '
+                                     'as parameters.')},
+                       SMSACTION.SMSAUTO: {
+                           'type': 'bool',
+                           'desc': _('If set, a new SMS OTP will be sent '
+                                     'after successful authentication with '
+                                     'one SMS OTP.')},
                        ACTION.CHALLENGETEXT: {
                            'type': 'str',
-                           'desc': _('Use an alternate challenge text for telling the '
-                                     'user to enter the code from the SMS.')
+                           'desc': _('Use an alternative challenge text for telling the '
+                                     'user to enter the code from the SMS. You can also '
+                                     'use tags for automated replacement. Check out the '
+                                     'documentation for more details.')
                        }
                    },
                    SCOPE.ADMIN: {
                        SMSACTION.GATEWAYS: {
                            'type': 'str',
-                           'desc': u"{0!s} ({1!s})".format(
+                           'desc': "{0!s} ({1!s})".format(
                                _('Choose the gateways the administrator is allowed to set.'),
                                " ".join(sms_gateways))
                        }
@@ -232,7 +233,7 @@ class SmsTokenClass(HotpTokenClass):
                    SCOPE.USER: {
                        SMSACTION.GATEWAYS: {
                            'type': 'str',
-                           'desc': u"{0!s} ({1!s})".format(
+                           'desc': "{0!s} ({1!s})".format(
                                _('Choose the gateways the user is allowed to set.'),
                                " ".join(sms_gateways))
                        }
@@ -251,7 +252,7 @@ class SmsTokenClass(HotpTokenClass):
                        }
                    }
                },
-        }
+               }
 
         if key:
             ret = res.get(key, {})
@@ -285,6 +286,7 @@ class SmsTokenClass(HotpTokenClass):
                 param['genkey'] = 1
 
         HotpTokenClass.update(self, param, reset_failcount)
+        return
 
     @log_with(log)
     def is_challenge_request(self, passw, user=None, options=None):
@@ -328,20 +330,21 @@ class SmsTokenClass(HotpTokenClass):
         if self.is_active() is True:
             counter = self.get_otp_count()
             log.debug("counter={0!r}".format(counter))
-            self.inc_otp_counter(counter, reset=False)
-            # At this point we must not bail out in case of an
-            # Gateway error, since checkPIN is successful. A bail
-            # out would cancel the checking of the other tokens
+            # At this point we must not bail out in case of a
+            # Gateway error, since checkPIN is successful. A bailout
+            # would cancel the checking of the other tokens
             try:
-                message_template = self._get_sms_text(options)
-                success, sent_message = self._send_sms(
-                    message=message_template, options=options)
+                data = None
+                # Only if this is NOT a multichallenge enrollment, we try to send the sms
+                if options.get("session") != CHALLENGE_SESSION.ENROLLMENT:
+                    self.inc_otp_counter(counter, reset=False)
+                    message_template = self._get_sms_text(options)
+                    success, sent_message = self._send_sms(
+                        message=message_template, options=options)
 
-                # Create the challenge in the database
-                if is_true(get_from_config("sms.concurrent_challenges")):
-                    data = self.get_otp()[2]
-                else:
-                    data = None
+                    # Create the challenge in the database
+                    if is_true(get_from_config("sms.concurrent_challenges")):
+                        data = self.get_otp()[2]
                 db_challenge = Challenge(self.token.serial,
                                          transaction_id=transactionid,
                                          challenge=options.get("challenge"),
@@ -351,16 +354,14 @@ class SmsTokenClass(HotpTokenClass):
                 db_challenge.save()
                 transactionid = transactionid or db_challenge.transaction_id
             except Exception as e:
-                info = _("The PIN was correct, but the "
-                         "SMS could not be sent!")
-                log.warning(info + " ({0!s})".format(e))
+                info = _("The PIN was correct, but the SMS could not be sent!")
+                log.warning(info + " ({0!r})".format(e))
                 log.debug("{0!s}".format(traceback.format_exc()))
                 return_message = info
                 if is_true(options.get("exception")):
                     raise Exception(info)
 
-        expiry_date = datetime.datetime.now() + \
-                                    datetime.timedelta(seconds=validity)
+        expiry_date = datetime.datetime.now() + datetime.timedelta(seconds=validity)
         reply_dict['attributes']['valid_until'] = "{0!s}".format(expiry_date)
 
         return success, return_message, transactionid, reply_dict
@@ -372,13 +373,14 @@ class SmsTokenClass(HotpTokenClass):
         check the otpval of a token against a given counter
         and the window
 
-        :param passw: the to be verified passw/pin
-        :type passw: string
+        :param anOtpVal: the to be verified passw/pin
+        :type anOtpVal: string
 
         :return: counter if found, -1 if not found
         :rtype: int
         """
         options = options or {}
+
         ret = HotpTokenClass.check_otp(self, anOtpVal, counter, window, options)
         if ret < 0 and is_true(get_from_config("sms.concurrent_challenges")):
             if safe_compare(options.get("data"), anOtpVal):
@@ -409,7 +411,7 @@ class SmsTokenClass(HotpTokenClass):
         """
         if is_true(self.get_tokeninfo("dynamic_phone")):
             phone = self.user.get_user_phone("mobile")
-            if type(phone) == list and phone:
+            if isinstance(phone, list) and phone:
                 # if there is a non-empty list, we use the first entry
                 phone = phone[0]
         else:
@@ -427,11 +429,12 @@ class SmsTokenClass(HotpTokenClass):
                                tokenowner=User,
                                tokentype="sms",
                                recipient={"givenname": User.info.get("givenname") if User else "",
-                                          "surname": User.info.get("surname") if User else ""})
-        message = message.format(otp=otp, challenge=options.get("challenge"), **tags)
+                                          "surname": User.info.get("surname") if User else ""},
+                               challenge=options.get("challenge"))
+        message = message.format(otp=otp, **tags)
 
         # First we try to get the new SMS gateway config style
-        # The token specific identifier has priority over the system wide identifier
+        # The token specific identifier has priority over the system-wide identifier
         sms_gateway_identifier = self.get_tokeninfo("sms.identifier") or get_from_config("sms.identifier")
 
         if sms_gateway_identifier:
@@ -442,7 +445,7 @@ class SmsTokenClass(HotpTokenClass):
             # Old style
             (SMSProvider, SMSProviderClass) = self._get_sms_provider()
             log.debug("smsprovider: {0!s}, class: {1!s}".format(SMSProvider,
-                                                      SMSProviderClass))
+                                                                SMSProviderClass))
 
             try:
                 sms = get_sms_provider_class(SMSProvider, SMSProviderClass)()
@@ -506,7 +509,7 @@ class SmsTokenClass(HotpTokenClass):
         try:
             timeout = int(get_from_config("sms.providerTimeout", 5 * 60))
         except Exception as ex:  # pragma: no cover
-            log.warning("SMSProviderTimeout: value error {0!r} - reset to 5*60".format((ex)))
+            log.warning("SMSProviderTimeout: value error {0!r} - reset to 5*60".format(ex))
             timeout = 5 * 60
         return timeout
 
@@ -514,8 +517,8 @@ class SmsTokenClass(HotpTokenClass):
     def _get_sms_text(options):
         """
         This returns the SMSTEXT from the policy "smstext"
-        
-        options contains data like clientip, g, user and also the Request 
+
+        options contains data like clientip, g, user and also the Request
         parameters like "challenge" or "pass".
 
         :param options: contains user and g object.
@@ -541,7 +544,7 @@ class SmsTokenClass(HotpTokenClass):
         This returns the AUTOSMS setting.
 
         :param options: contains user and g object.
-        :optins type: dict
+        :type options: dict
         :return: True if an SMS should be sent automatically
         :rtype: bool
         """
@@ -554,7 +557,7 @@ class SmsTokenClass(HotpTokenClass):
 
         return autosms
 
-    def prepare_verify_enrollment(self):
+    def prepare_verify_enrollment(self, options=None):
         """
         This is called, if the token should be enrolled in a way, that the user
         needs to provide a proof, that the server can verify, that the token
@@ -565,5 +568,61 @@ class SmsTokenClass(HotpTokenClass):
 
         :return: A dictionary with information that is needed to trigger the verification.
         """
-        self.create_challenge()
-        return {"message": VERIFY_ENROLLMENT_MESSAGE}
+        # TODO: how should we handle errors when sending the SMS?
+        #  Currently we just return the message without checking the result
+        _res, msg, _tid, _rdict = self.create_challenge(options=options)
+        return {"message": msg}
+
+    @classmethod
+    def enroll_via_validate(cls, g, content, user_obj, message=None):
+        """
+        This class method is used in the policy ENROLL_VIA_MULTICHALLENGE.
+        It enrolls a new token of this type and returns the necessary information
+        to the client by modifying the content.
+
+        :param g: context object
+        :param content: The content of a response
+        :param user_obj: A user object
+        :param message: An alternative message displayed to the user during enrollment
+        :return: None, the content is modified
+        """
+        from privacyidea.lib.token import init_token
+        from privacyidea.lib.tokenclass import CLIENTMODE
+        token_obj = init_token({"type": cls.get_class_type(),
+                                "dynamic_phone": 1}, user=user_obj)
+        content.get("result")["value"] = False
+        content.get("result")["authentication"] = "CHALLENGE"
+
+        detail = content.setdefault("detail", {})
+        # Create a challenge!
+        options = {"session": CHALLENGE_SESSION.ENROLLMENT, "g": g, "user": user_obj}
+        c = token_obj.create_challenge(options=options)
+        detail["transaction_ids"] = [c[2]]
+        chal = {"transaction_id": c[2],
+                "image": None,
+                "client_mode": CLIENTMODE.INTERACTIVE,
+                "serial": token_obj.token.serial,
+                "type": token_obj.type,
+                "message": message or _("Please enter your new phone number!")}
+        detail["multi_challenge"] = [chal]
+        detail.update(chal)
+
+    def enroll_via_validate_2nd_step(self, passw, options=None):
+        """
+        This method is the optional second step of ENROLL_VIA_MULTICHALLENGE.
+        It is used in situations like the email token, sms token or push,
+        when enrollment via challenge response needs two steps.
+
+        The passw is entered during the first authentication step and it
+        contains the email address.
+
+        So we need to update the token with the email address and
+        we need to create a new challenge for the final authentication.
+
+        :param options:
+        :return:
+        """
+        self.del_tokeninfo("dynamic_phone")
+        self.add_tokeninfo("phone", passw)
+        # Dynamically we remember that we need to do another challenge
+        self.currently_in_challenge = True

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2021-10-05 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Allow to set a default slot number
 #  2017-09-25 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -24,10 +22,10 @@
 
 import logging
 import datetime
-from privacyidea.lib.security.default import SecurityModule
+from privacyidea.lib.security.default import (SecurityModule,
+                                              int_list_to_bytestring)
 from privacyidea.lib.error import HSMException
 from privacyidea.lib.crypto import get_alphanum_str
-from six import int2byte
 
 __doc__ = """
 This is a PKCS11 Security module that encrypts and decrypts the data on a
@@ -43,10 +41,6 @@ try:
 except ImportError:
     log.info("The python module PyKCS11 is not available. "
              "So we can not use the PKCS11 security module.")
-
-
-def int_list_to_bytestring(int_list):  # pragma: no cover
-    return b"".join([int2byte(i) for i in int_list])
 
 
 class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
@@ -186,13 +180,18 @@ class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
                 self.session_lastused_time = datetime.datetime.now()
                 break
             except PyKCS11.PyKCS11Error as exx:
-                log.warning(u"Generate Random failed: {0!s}".format(exx))
-                # If something goes wrong in this process, we free memory, session and handles
-                self.pkcs11.lib.C_Finalize()
-                self.initialize_hsm()
-                retries += 1
-                if retries > self.max_retries:
-                    raise HSMException("Failed to generate random number after multiple retries.")
+                log.warning("Generate Random failed: {0!s}".format(exx))
+                # If we get an CKR_SESSION_HANDLE_INVALID error code, we free
+                # memory, session and handles and retry
+                if exx.value == PyKCS11.CKR_SESSION_HANDLE_INVALID:
+                    self.pkcs11.lib.C_Finalize()
+                    self.initialize_hsm()
+                    retries += 1
+                    if retries > self.max_retries:
+                        raise HSMException("Failed to generate random number after multiple retries.")
+                else:
+                    raise HSMException("HSM random number generation failed "
+                                       "with {0!s}".format(exx))
 
         # convert the array of the random integers to a string
         return int_list_to_bytestring(r_integers)
@@ -202,8 +201,6 @@ class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
 
         :rtype: bytes
         """
-        if len(data) == 0:
-            return bytes()
         log.debug("Encrypting {} bytes with key {}".format(len(data), key_id))
         m = PyKCS11.Mechanism(PyKCS11.CKM_AES_CBC_PAD, iv)
         retries = 0
@@ -214,13 +211,17 @@ class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
                 self.session_lastused_time = datetime.datetime.now()
                 break
             except PyKCS11.PyKCS11Error as exx:
-                log.warning(u"Encryption failed: {0!s}".format(exx))
-                # If something goes wrong in this process, we free memory,session and handles
-                self.pkcs11.lib.C_Finalize()
-                self.initialize_hsm()
-                retries += 1
-                if retries > self.max_retries:
-                    raise HSMException("Failed to encrypt after multiple retries.")
+                log.warning("Encryption failed: {0!s}".format(exx))
+                # If we get an CKR_SESSION_HANDLE_INVALID error code, we free
+                # memory, session and handles and retry
+                if exx.value == PyKCS11.CKR_SESSION_HANDLE_INVALID:
+                    self.pkcs11.lib.C_Finalize()
+                    self.initialize_hsm()
+                    retries += 1
+                    if retries > self.max_retries:
+                        raise HSMException("Failed to encrypt after multiple retries")
+                else:
+                    raise HSMException("HSM encryption failed with {0!s}".format(exx))
 
         return int_list_to_bytestring(r)
 
@@ -229,8 +230,9 @@ class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
 
         :rtype bytes
         """
+        # we keep this for legacy reasons, even though it hasn't worked anyway
         if len(enc_data) == 0:
-            return bytes("")
+            return bytes()
         log.debug("Decrypting {} bytes with key {}".format(len(enc_data), key_id))
         m = PyKCS11.Mechanism(PyKCS11.CKM_AES_CBC_PAD, iv)
         start = datetime.datetime.now()
@@ -242,19 +244,23 @@ class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
                 self.session_lastused_time = datetime.datetime.now()
                 break
             except PyKCS11.PyKCS11Error as exx:
-                log.warning(u"Decryption retry: {0!s}".format(exx))
-                # If something goes wrong in this process, we free memory, session and handlers
-                self.pkcs11.lib.C_Finalize()
-                self.initialize_hsm()
-                retries += 1
-                if retries > self.max_retries:
-                    td = datetime.datetime.now() - start
-                    log.warning(u"Decryption finally failed: {0!s}. Time taken: {1!s}.".format(exx, td))
-                    raise HSMException("Failed to decrypt after multiple retries.")
+                log.warning("Decryption failed: {0!s}".format(exx))
+                # If we get an CKR_SESSION_HANDLE_INVALID error code, we free
+                # memory, session and handles and retry
+                if exx.value == PyKCS11.CKR_SESSION_HANDLE_INVALID:
+                    self.pkcs11.lib.C_Finalize()
+                    self.initialize_hsm()
+                    retries += 1
+                    if retries > self.max_retries:
+                        td = datetime.datetime.now() - start
+                        log.warning("Decryption finally failed: {0!s}. Time taken: {1!s}.".format(exx, td))
+                        raise HSMException("Failed to decrypt after multiple retries.")
+                else:
+                    raise HSMException("HSM decrypt failed with {0!s}".format(exx))
 
         if retries > 0:
             td = datetime.datetime.now() - start
-            log.warning(u"Decryption after {0!s} retries successful. Time taken: {1!s}.".format(retries, td))
+            log.warning("Decryption after {0!s} retries successful. Time taken: {1!s}.".format(retries, td))
         return int_list_to_bytestring(r)
 
     def create_keys(self):
@@ -283,7 +289,6 @@ class AESHardwareSecurityModule(SecurityModule):  # pragma: no cover
                 (PyKCS11.CKA_KEY_TYPE, PyKCS11.CKK_AES),
                 (PyKCS11.CKA_VALUE_LEN, 32),
                 (PyKCS11.CKA_LABEL, label),
-                (PyKCS11.CKA_ID, label),
                 (PyKCS11.CKA_TOKEN, PyKCS11.CK_TRUE),
                 (PyKCS11.CKA_PRIVATE, True),
                 (PyKCS11.CKA_SENSITIVE, True),
@@ -318,14 +323,14 @@ if __name__ == "__main__":  # pragma: no cover
     password = "topSekr3t" * 16
     crypted = p.encrypt_password(password)
     text = p.decrypt_password(crypted)
-    assert(text == password)
+    assert(text == password)  # nosec B101 # This is actually a test
     log.info("password encrypt/decrypt test successful")
 
     # pin
-    password = "topSekr3t"
+    password = "topSekr3t"  # nosec B105 # used for testing
     crypted = p.encrypt_pin(password)
     text = p.decrypt_pin(crypted)
-    assert (text == password)
+    assert (text == password)  # nosec B101 # This is actually a test
     log.info("pin encrypt/decrypt test successful")
 
     p = AESHardwareSecurityModule({"module": module, "slot": 2,
@@ -339,7 +344,7 @@ if __name__ == "__main__":  # pragma: no cover
 
     # generic encrypt / decrypt
     cipher = p.encrypt(plain, tmp_iv)
-    assert (plain != cipher)
+    assert (plain != cipher)  # nosec B101 # This is actually a test
     text = p.decrypt(cipher, tmp_iv)
-    assert (text == plain)
+    assert (text == plain)  # nosec B101 # This is actually a test
     log.info("generic encrypt/decrypt test successful")

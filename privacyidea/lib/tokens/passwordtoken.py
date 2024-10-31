@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA is a fork of LinOTP
 #  2014-12-05 Cornelius Kölbel <cornelius@privacyidea.org>
 #             Migration to flask
@@ -28,7 +26,8 @@ from privacyidea.lib.decorators import check_token_locked
 from privacyidea.lib import _
 from privacyidea.lib.policy import SCOPE, ACTION, GROUP
 from privacyidea.api.lib.prepolicy import _generate_pin_from_policy
-
+from privacyidea.api.lib.utils import getParam
+from privacyidea.lib.utils import is_true
 
 optional = True
 required = False
@@ -47,7 +46,9 @@ class PasswordTokenClass(TokenClass):
     This Token can be used for a scenario like losttoken
     """
 
-    password_detail_key = "password"
+    password_detail_key = "password"  # nosec B105 # key name
+    default_length = DEFAULT_LENGTH
+    default_contents = DEFAULT_CONTENTS
 
     class SecretPassword(object):
 
@@ -81,10 +82,10 @@ class PasswordTokenClass(TokenClass):
 
     def __init__(self, aToken):
         TokenClass.__init__(self, aToken)
-        self.otp_len = DEFAULT_LENGTH
-        self.otp_contents = DEFAULT_CONTENTS
+        self.otp_len = self.default_length
+        self.otp_contents = self.default_contents
         self.hKeyRequired = True
-        self.set_type(u"pw")
+        self.set_type("pw")
 
     @staticmethod
     def get_class_type():
@@ -149,7 +150,8 @@ class PasswordTokenClass(TokenClass):
         :type param: dict
         :return: None
         """
-        if "genkey" in param:
+        genkey = is_true(getParam(param, "genkey", optional=True))
+        if genkey:
             # Otherwise genkey and otpkey will raise an exception in
             # PasswordTokenClass
             del param["genkey"]

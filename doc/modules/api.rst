@@ -17,13 +17,17 @@ Now you can take a look at the several REST endpoints.
    api/auth
    api/validate
    api/system
+   api/tokengroup
+   api/serviceid
    api/resolver
    api/realm
    api/defaultrealm
    api/token
+   api/container
    api/user
    api/policy
    api/event
+   api/healthcheck
    api/machineresolver
    api/machines
    api/privacyideaserver

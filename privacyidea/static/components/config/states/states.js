@@ -35,7 +35,8 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
             $stateProvider
                 .state('config', {
                     url: "/config",
-                    templateUrl: configpath + "config.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "configController"
                 })
                 .state('config.resolvers', {
                     url: "/resolvers",
@@ -48,20 +49,24 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
                 .state('config.resolvers.addpasswdresolver', {
                     // Create a new resolver
                     url: "/passwd",
-                    templateUrl: configpath + "config.resolvers.passwd.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.passwd.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "PasswdResolverController"
                 })
                 .state('config.resolvers.editpasswdresolver', {
                     // edit an existing resolver
                     url: "/passwd/:resolvername",
-                    templateUrl: configpath + "config.resolvers.passwd.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.passwd.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "PasswdResolverController"
                 })
                 .state('config.resolvers.addhttpresolver', {
                     url: "/httpresolver",
-                    templateUrl: configpath + "config.resolvers.http.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.http.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "HTTPResolverController"
                 })
                 .state('config.resolvers.edithttpresolver', {
                     url: "/httpresolver/:resolvername",
-                    templateUrl: configpath + "config.resolvers.http.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.http.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "HTTPResolverController"
                 })
                 .state('config.resolvers.addkeycloakresolver', {
                     url: "/keycloakresolver",
@@ -73,47 +78,67 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
                 })                
                 .state('config.resolvers.addldapresolver', {
                     url: "/ldap",
-                    templateUrl: configpath + "config.resolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "LdapResolverController"
                 })
                 .state('config.resolvers.editldapresolver', {
                     url: "/ldap/:resolvername",
-                    templateUrl: configpath + "config.resolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "LdapResolverController"
                 })
                 .state('config.resolvers.addscimresolver', {
                     url: "/scim",
-                    templateUrl: configpath + "config.resolvers.scim.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.scim.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "ScimResolverController"
                 })
                 .state('config.resolvers.editscimresolver', {
                     url: "/scim/:resolvername",
-                    templateUrl: configpath + "config.resolvers.scim.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.scim.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "ScimResolverController"
                 })
                 .state('config.resolvers.addsqlresolver', {
                     url: "/ldap",
-                    templateUrl: configpath + "config.resolvers.sql.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.sql.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "SqlResolverController"
                 })
                 .state('config.resolvers.editsqlresolver', {
                     url: "/ldap/:resolvername",
-                    templateUrl: configpath + "config.resolvers.sql.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.resolvers.sql.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "SqlResolverController"
                 })
                 .state('config.caconnectors', {
                     url: "/caconnectors",
-                    templateUrl: configpath + "config.caconnectors.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "CAConnectorController"
                 })
                 .state('config.caconnectors.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.caconnectors.list.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.caconnectors.list.html" + versioningSuffixProviderProvider.$get().$get(),
                 })
                 .state('config.caconnectors.addlocal', {
                     url: "/local",
-                    templateUrl: configpath + "config.caconnectors.local.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.caconnectors.local.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "LocalCAConnectorController"
                 })
                 .state('config.caconnectors.editlocal', {
                     url: "/local/:connectorname",
-                    templateUrl: configpath + "config.caconnectors.local.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.caconnectors.local.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "LocalCAConnectorController"
+                })
+                .state('config.caconnectors.addmicrosoft', {
+                    url: "/microsoft",
+                    templateUrl: configpath + "config.caconnectors.microsoft.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "MicrosoftCAConnectorController"
+                })
+                .state('config.caconnectors.editmicrosoft', {
+                    url: "/microsoft/:connectorname",
+                    templateUrl: configpath + "config.caconnectors.microsoft.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "MicrosoftCAConnectorController"
                 })
                 .state('config.mresolvers', {
                     url: "/machineresolvers",
-                    templateUrl: configpath + "config.machineresolvers.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.machineresolvers.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "machineResolverController"
                 })
                 .state('config.mresolvers.list', {
                     url: "/list",
@@ -122,34 +147,43 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
                 .state('config.mresolvers.addhosts', {
                     // Create a new resolver
                     url: "/hosts",
-                    templateUrl: configpath + "config.mresolvers.hosts.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.mresolvers.hosts.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "hostsResolverController"
                 })
                 .state('config.mresolvers.edithosts', {
                     // edit an existing resolver
                     url: "/hosts/:resolvername",
-                    templateUrl: configpath + "config.mresolvers.hosts.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.mresolvers.hosts.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "hostsResolverController"
                 })
                 .state('config.mresolvers.addldap', {
                     // Create a new resolver
                     url: "/ldap",
-                    templateUrl: configpath + "config.mresolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.mresolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "ldapMachineResolverController"
                 })
                 .state('config.mresolvers.editldap', {
                     // edit an existing resolver
                     url: "/ldap/:resolvername",
-                    templateUrl: configpath + "config.mresolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.mresolvers.ldap.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "ldapMachineResolverController"
                 })
                 .state('config.system', {
                     url: "/system",
                     templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get()
                 })
-                .state('config.sysdoc', {
-                    url: "/system/documentation",
-                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get()
+                .state('config.system.edit', {
+                    url: "/edit",
+                    templateUrl: configpath + "config.system.edit.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.system.doc', {
+                    url: "/documentation",
+                    templateUrl: configpath + "config.system.doc.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.policies', {
                     url: "/policies",
-                    templateUrl: configpath + "config.policies.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.policies.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "policyListController"
                 })
                 .state('config.policies.list', {
                     url: "/list",
@@ -178,91 +212,126 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
 //                })
                 .state('config.realms', {
                     url: "/realms",
-                    templateUrl: configpath + "config.realms.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.realms.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "realmController"
                 })
                 .state('config.realms.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.realms.list.html" + versioningSuffixProviderProvider.$get().$get()
+                    templateUrl: configpath + "config.realms.list.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "realmListController"
+                })
+                .state('config.realms.create', {
+                    url: "/create",
+                    templateUrl: configpath + "config.realms.create.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "realmCreateController"
+                })
+                .state('config.realms.edit', {
+                    url: "/edit",
+                    templateUrl: configpath + "config.realms.create.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "realmEditController",
+                    params: {realmName: null, realm: null}
                 })
                 .state('config.smtp', {
                     url: "/smtp",
-                    templateUrl: configpath + "config.smtp.html" + versioningSuffixProviderProvider.$get().$get(),
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
                     controller: "smtpServerController"
                 })
                 .state('config.smtp.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.smtp.list.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "smtpServerController"
+                    templateUrl: configpath + "config.smtp.list.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.smtp.edit', {
                     url: "/edit/:identifier",
                     templateUrl: configpath + "config.smtp.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "smtpServerController"
                 })
                 .state('config.smtp.add', {
                     url: "/edit/",
-                    templateUrl: configpath + "config.smtp.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "smtpServerController"
+                    templateUrl: configpath + "config.smtp.edit.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.smsgateway', {
                     url: "/smsgateway",
-                    templateUrl: configpath + "config.smsgateway.html" + versioningSuffixProviderProvider.$get().$get(),
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
                     controller: "smsgatewayController"
                 })
                 .state('config.smsgateway.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.smsgateway.list.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "smsgatewayController"
+                    templateUrl: configpath + "config.smsgateway.list.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.smsgateway.edit', {
                     url: "/edit/:gateway_id",
-                    templateUrl: configpath + "config.smsgateway.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "smsgatewayController"
+                    templateUrl: configpath + "config.smsgateway.edit.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.smsgateway.add', {
                     url: "/edit/",
-                    templateUrl: configpath + "config.smsgateway.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "smsgatewayController"
+                    templateUrl: configpath + "config.smsgateway.edit.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.radius', {
                     url: "/radius",
-                    templateUrl: configpath + "config.radius.html" + versioningSuffixProviderProvider.$get().$get(),
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
                     controller: "radiusServerController"
                 })
                 .state('config.radius.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.radius.list.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "radiusServerController"
+                    templateUrl: configpath + "config.radius.list.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.radius.edit', {
                     url: "/edit/:identifier",
-                    templateUrl: configpath + "config.radius.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "radiusServerController"
+                    templateUrl: configpath + "config.radius.edit.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.radius.add', {
                     url: "/edit/",
-                    templateUrl: configpath + "config.radius.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "radiusServerController"
+                    templateUrl: configpath + "config.radius.edit.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.tokengroup', {
+                    url: "/tokengroup",
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "tokengroupController"
+                })
+                .state('config.tokengroup.list', {
+                    url: "/list",
+                    templateUrl: configpath + "config.tokengroup.list.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.tokengroup.edit', {
+                    url: "/edit/:groupname",
+                    templateUrl: configpath + "config.tokengroup.edit.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.tokengroup.add', {
+                    url: "/edit/",
+                    templateUrl: configpath + "config.tokengroup.edit.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.serviceid', {
+                    url: "/serviceid",
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
+                    controller: "serviceidController"
+                })
+                .state('config.serviceid.list', {
+                    url: "/list",
+                    templateUrl: configpath + "config.serviceid.list.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.serviceid.edit', {
+                    url: "/edit/:servicename",
+                    templateUrl: configpath + "config.serviceid.edit.html" + versioningSuffixProviderProvider.$get().$get()
+                })
+                .state('config.serviceid.add', {
+                    url: "/edit/",
+                    templateUrl: configpath + "config.serviceid.edit.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.privacyideaserver', {
                     url: "/privacyideaserver",
-                    templateUrl: configpath + "config.privacyideaserver.html" + versioningSuffixProviderProvider.$get().$get(),
+                    templateUrl: configpath + "config.system.html" + versioningSuffixProviderProvider.$get().$get(),
                     controller: "privacyideaServerController"
                 })
                 .state('config.privacyideaserver.list', {
                     url: "/list",
                     templateUrl: configpath + "config.privacyideaserver.list.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "privacyideaServerController"
                 })
                 .state('config.privacyideaserver.edit', {
                     url: "/edit/:identifier",
                     templateUrl: configpath + "config.privacyideaserver.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "privacyideaServerController"
                 })
                 .state('config.privacyideaserver.add', {
                     url: "/edit/",
-                    templateUrl: configpath + "config.privacyideaserver.edit.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "privacyideaServerController"
+                    templateUrl: configpath + "config.privacyideaserver.edit.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.events', {
                     url: "/events",
@@ -281,8 +350,7 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
                 })
                 .state('config.events.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.events.list.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "eventController"
+                    templateUrl: configpath + "config.events.list.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.periodictasks', {
                     url: "/periodictasks",
@@ -291,8 +359,7 @@ angular.module('privacyideaApp.configStates', ['ui.router', 'privacyideaApp.vers
                 })
                 .state('config.periodictasks.list', {
                     url: "/list",
-                    templateUrl: configpath + "config.periodictasks.list.html" + versioningSuffixProviderProvider.$get().$get(),
-                    controller: "periodicTaskController"
+                    templateUrl: configpath + "config.periodictasks.list.html" + versioningSuffixProviderProvider.$get().$get()
                 })
                 .state('config.periodictasks.details', {
                     url: "/details/:ptaskid",

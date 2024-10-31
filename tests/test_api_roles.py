@@ -1,4 +1,3 @@
-# coding: utf-8
 """
 This file tests the authentication of admin users and normal user (
 selfservice) on the REST API.
@@ -11,16 +10,16 @@ import json
 from . import ldap3mock
 from .test_api_validate import LDAPDirectory
 from .base import MyApiTestCase
-from privacyidea.lib.error import (TokenAdminError, UserError)
 from privacyidea.lib.token import (get_tokens, remove_token, enable_token,
-                                   assign_token, unassign_token, init_token)
+                                   assign_token, init_token)
 from privacyidea.lib.user import User
 from privacyidea.lib.tokenclass import AUTH_DATE_FORMAT
 from privacyidea.lib.resolver import save_resolver
 from privacyidea.models import Token
 from privacyidea.lib.realm import (set_realm, delete_realm, set_default_realm)
 from privacyidea.api.lib.postpolicy import DEFAULT_POLICY_TEMPLATE_URL
-from privacyidea.lib.policy import ACTION, SCOPE, set_policy, delete_policy, LOGINMODE
+from privacyidea.lib.policy import (ACTION, SCOPE, set_policy, delete_policy,
+                                    LOGINMODE, ACTIONVALUE)
 
 
 PWFILE = "tests/testdata/passwords"
@@ -117,7 +116,7 @@ class APIAuthTestCase(MyApiTestCase):
 
         # Define the superuser_realm: "adminrealm"
         (added, failed) = set_realm("adminrealm",
-                                    [self.resolvername1])
+                                    [{'name': self.resolvername1}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 1)
 
@@ -175,15 +174,20 @@ class APIAuthChallengeResponse(MyApiTestCase):
         from privacyidea.lib.token import set_pin
         set_pin("hotp1", "pin")
 
+    def tearDown(self):
+        remove_token('hotp1')
+        delete_policy('pol_cr')
+        delete_policy('webuilog')
+
     def test_01_challenge_response_at_webui(self):
         with self.app.test_request_context('/auth',
                                            method='POST',
                                            data={"username": "selfservice",
                                                  "password": "pin"}):
             res = self.app.full_dispatch_request()
-            self.assertTrue(res.status_code == 401, res)
+            self.assertTrue(res.status_code == 200, res)
             data = res.json
-            self.assertFalse(data.get("result").get("status"))
+            self.assertTrue(data.get("result").get("status"))
             detail = data.get("detail")
             self.assertTrue("enter otp" in detail.get("message"), detail.get("message"))
             transaction_id = detail.get("transaction_id")
@@ -198,6 +202,29 @@ class APIAuthChallengeResponse(MyApiTestCase):
             self.assertTrue(res.status_code == 200, res)
             data = res.json
             self.assertEqual(data.get("result").get("value").get("username"), "selfservice")
+
+    def test_02_auth_chal_resp_multi_token(self):
+        # create another token
+        Token("hotp2", "hotp", otpkey=self.otpkey, userid=1004,
+              resolver=self.resolvername1, realm=self.realm1).save()
+        set_policy(name="pol_otppin", scope=SCOPE.AUTH,
+                   action="{0!s}={1!s}".format(ACTION.OTPPIN, ACTIONVALUE.USERSTORE))
+        with self.app.test_request_context('/auth',
+                                           method='POST',
+                                           data={"username": "selfservice",
+                                                 "password": 'test'}):
+            res = self.app.full_dispatch_request()
+            self.assertEqual(res.status_code, 200, res)
+            result = res.json.get('detail')
+            self.assertTrue('multi_challenge' in result, result)
+            self.assertEqual({'hotp1', 'hotp2'}, set([x['serial'] for x in result.get('multi_challenge')]))
+
+        # check if we have both serials in the audit log
+        ae = self.find_most_recent_audit_entry(action='POST /auth')
+        self.assertTrue({"hotp1", "hotp2"}.issubset(set(ae.get('serial').split(','))), ae)
+
+        delete_policy('pol_otppin')
+        remove_token('hotp2')
 
 
 class APISelfserviceTestCase(MyApiTestCase):
@@ -247,7 +274,7 @@ class APISelfserviceTestCase(MyApiTestCase):
     def test_01_authenticate_admin_from_realm(self):
         # Define an admin realm!
         (added, failed) = set_realm("adminrealm",
-                                    [self.resolvername1])
+                                    [{'name': self.resolvername1}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 1)
 
@@ -1008,6 +1035,7 @@ class APISelfserviceTestCase(MyApiTestCase):
             ACTION.LOGOUTTIME, 200))
         set_policy(name="webui4", scope=SCOPE.WEBUI, action="{0!s}={1!s}".format(
             ACTION.AUDITPAGESIZE, 20))
+        set_policy(name="webui5", scope=SCOPE.WEBUI, action=ACTION.DELETION_CONFIRMATION)
         with self.app.test_request_context('/auth',
                                            method='POST',
                                            data={"username": "selfservice@realm1",
@@ -1028,6 +1056,10 @@ class APISelfserviceTestCase(MyApiTestCase):
             self.assertTrue(result2.get("status"), res.data)
             # Test logout time
             self.assertEqual(result2.get("value").get("logout_time"), 200)
+            # check if value is True if deletion_confirmation is set
+            self.assertEqual(result.get("value").get("deletion_confirmation"), True)
+
+        delete_policy("webui5")
 
     def test_42_auth_timelimit_maxfail(self):
         self.setUp_user_realm2()
@@ -1055,7 +1087,7 @@ class APISelfserviceTestCase(MyApiTestCase):
         with self.app.test_request_context('/auth',
                                            method='POST',
                                            data={"username": "timelimituser@" + self.realm2,
-                                                 "pass": pin}):
+                                                 "password": pin}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 401)
             details = res.json.get("detail")
@@ -1161,7 +1193,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
         r = save_resolver(params)
         self.assertTrue(r > 0)
 
-        r = set_realm("ldaprealm", resolvers=["ldapgroups"])
+        r = set_realm("ldaprealm", resolvers=[{'name': "ldapgroups"}])
         set_default_realm("ldaprealm")
         self.assertEqual(r, (["ldapgroups"], []))
 
@@ -1177,7 +1209,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
 
         # disabled policy: by default, login is disabled
         with self.app.test_request_context('/policy/disabled',
-                                           json={'action': u"{}={}".format(ACTION.LOGINMODE, LOGINMODE.DISABLE),
+                                           json={'action': "{}={}".format(ACTION.LOGINMODE, LOGINMODE.DISABLE),
                                                  'scope': SCOPE.WEBUI,
                                                  'realm': '',
                                                  'priority': 2,
@@ -1189,7 +1221,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
 
         # userstore policy: for admins, require the userstore password
         with self.app.test_request_context('/policy/userstore',
-                                           json={'action': u"{}={}".format(ACTION.LOGINMODE, LOGINMODE.USERSTORE),
+                                           json={'action': "{}={}".format(ACTION.LOGINMODE, LOGINMODE.USERSTORE),
                                                  'scope': SCOPE.WEBUI,
                                                  'realm': '',
                                                  'priority': 1,
@@ -1204,7 +1236,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
 
         # privacyidea policy: for helpdesk users, require the token PIN
         with self.app.test_request_context('/policy/privacyidea',
-                                           json={'action': u"{}={}".format(ACTION.LOGINMODE, LOGINMODE.PRIVACYIDEA),
+                                           json={'action': "{}={}".format(ACTION.LOGINMODE, LOGINMODE.PRIVACYIDEA),
                                                  'scope': SCOPE.WEBUI,
                                                  'realm': '',
                                                  'priority': 1,
@@ -1278,7 +1310,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
         # if we now disable the condition on userstore and privacyidea, we get a conflicting policy error
         with self.app.test_request_context('/policy/privacyidea',
                                            json={'scope': SCOPE.WEBUI,
-                                                 'action': u"{}={}".format(ACTION.LOGINMODE, LOGINMODE.PRIVACYIDEA),
+                                                 'action': "{}={}".format(ACTION.LOGINMODE, LOGINMODE.PRIVACYIDEA),
                                                  'realm': '',
                                                  'active': True,
                                                  'conditions': [
@@ -1291,7 +1323,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
 
         with self.app.test_request_context('/policy/userstore',
                                            json={'scope': SCOPE.WEBUI,
-                                                 'action': u"{}={}".format(ACTION.LOGINMODE, LOGINMODE.USERSTORE),
+                                                 'action': "{}={}".format(ACTION.LOGINMODE, LOGINMODE.USERSTORE),
                                                  'realm': '',
                                                  'active': True,
                                                  'conditions': [
@@ -1356,7 +1388,7 @@ class PolicyConditionsTestCase(MyApiTestCase):
         with self.app.test_request_context('/auth',
                                            method='POST',
                                            data={"username": "bob",
-                                                 "password": u"bobpwééé"}):
+                                                 "password": "bobpwééé"}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
             result = res.json.get("result")

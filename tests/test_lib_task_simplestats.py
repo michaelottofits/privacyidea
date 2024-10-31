@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 This tests the files
   lib/task/simplestats.py
@@ -75,7 +74,7 @@ class TaskSimpleStatsTestCase(MyTestCase):
                            user=User(login="selfservice", realm=self.realm1))
         self.assertEqual("selfservice", token.user.login)
         self.assertTrue(token.is_active())
-        self.assertEqual(TOKENKIND.SOFTWARE, token.get_tokeninfo(u'tokenkind'))
+        self.assertEqual(TOKENKIND.SOFTWARE, token.get_tokeninfo('tokenkind'))
 
         # check if getting only certain stats works
         params['assigned_tokens'] = False

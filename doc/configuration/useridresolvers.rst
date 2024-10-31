@@ -9,10 +9,10 @@ Each organisation or company usually has its users managed at a central location
 This is why privacyIDEA does not provide its own user management but rather
 connects to existing user stores.
 
-UserIdResolvers are connectors to those user stores, the locations, 
+UserIdResolvers are connectors to those user stores, the locations,
 where the users are managed. Nowadays this can be LDAP directories or
 especially Active Directory, some times FreeIPA or the Redhat 389 service.
-But classically users are also located in files like /etc/passwd on 
+But classically users are also located in files like /etc/passwd on
 standalone unix systems. Web services often use SQL databases as
 user store.
 
@@ -40,7 +40,7 @@ it.
 Starting with privacyIDEA 2.4 resolvers can be editable, i.e. you can edit
 the users in the user store. Read more about this at :ref:`manage_users`.
 
-.. note:: Using the policy ``authentication:otppin=userstore`` users can
+.. note:: Using the authentication policy ``otppin=userstore`` users can
    authenticate with the password
    from their user store, being the LDAP password, SQL password or password
    from flat file.
@@ -52,7 +52,7 @@ Flatfile resolver
 
 .. index:: flatfile resolver
 
-Flatfile resolvers read files like ``/etc/passwd``. 
+Flatfile resolvers read files like ``/etc/passwd``.
 
 .. note:: The file ``/etc/passwd`` does not contain the unix password.
    Thus, if you create a flatfile resolver from this file the functionality
@@ -61,7 +61,7 @@ Flatfile resolvers read files like ``/etc/passwd``.
    usually found in ``/opt/privacyidea/bin/``.
 
 Create a flat file like this::
-   
+
    privacyidea-create-pwidresolver-user -u user2 -i 1002 >> /your/flat/file
 
 
@@ -71,22 +71,18 @@ LDAP resolver
 .............
 
 .. index:: LDAP resolver, OpenLDAP, Active Directory, FreeIPA, Penrose,
-   Novell eDirectory, SAML attributes
+   Novell eDirectory, SAML attributes, Kerberos
 
 The LDAP resolver can be used to access any kind of LDAP service like
-OpenLDAP, Active Directory,
-FreeIPA, Penrose, Novell eDirectory.
+OpenLDAP, Active Directory, FreeIPA, Penrose, Novell eDirectory.
 
 .. figure:: images/ldap-resolver.png
    :width: 500
 
    *LDAP resolver configuration*
 
-In case of Active Directory connections you might need to check the box
-``No anonymous referral chasing``. The underlying LDAP library is only
-able to do anonymous referral chasing. Active Directory will produce an
-error in this case [#adreferrals]_.
-
+Server settings
+~~~~~~~~~~~~~~~
 The ``Server URI`` can contain a comma separated list of servers.
 The servers are used to create a server pool and are used with a round robin
 strategy [#serverpool]_.
@@ -102,14 +98,97 @@ This will create LDAP requests to
  * server3 on port 389
  * server4 on port 636 using SSL.
 
-The ``Bind Type`` with Active Directory can either be chosen as "Simple" or
-as "NTLM".
+TLS Version
+"""""""""""
 
-.. note:: When using bind type "Simple" you need to specify the Bind DN like
-   *cn=administrator,cn=users,dc=domain,dc=name*. When using bind type "NTLM"
-   you need to specify Bind DN like *DOMAINNAME\\username*.
+When using TLS, you may specify the TLS version to use. Starting from version 3.6, privacyIDEA offers
+TLS v1.3 by default.
 
-The ``LoginName attribute`` is the attribute that holds the loginname. It
+
+TLS certificates
+""""""""""""""""
+
+When using TLS with LDAP, you can tell privacyIDEA to verify the certificate. The according
+checkbox is visible in the WebUI if the target URL starts with *ldaps* or when using STARTTLS.
+
+You can specify a file with the trusted CA certificate, that signed the
+TLS certificate. The default CA filename is */etc/privacyidea/ldap-ca.crt*
+and can contain a list of base64 encoded CA certificates.
+PrivacyIDEA will use the CA file if specified. If you leave the field empty
+it will also try the system certificate store (*/etc/ssl/certs/ca-certificates.crt*
+or */etc/ssl/certs/ca-bundle.crt*).
+
+Binding
+"""""""
+
+The ``Bind Type`` for querying the LDAP-Server can be ``Anonymous``, ``Simple``,
+``NTLM``, ``SASL Digest-MD5`` (Deprecated) or ``SASL Kerberos``.
+
+.. note:: When using bind type ``Simple`` you can specify the Bind-DN like
+   ``cn=administrator,cn=users,dc=domain,dc=name`` or ``administrator@domain.name``.
+   When using bind type ``NTLM`` you need to specify Bind-DN like
+   ``DOMAINNAME\\username``. In case of ``SASL Kerberos`` the Bind-DN needs to
+   be the *PrincipalName* corresponding to the given *keytab*-file.
+
+For the ``SASL Kerberos`` bind type, the privacyIDEA server needs to be
+integrated into the AD Domain. A basic setup and more information on the Kerberos
+authentication can be found in the corresponding
+`GitHub Wiki <https://github.com/privacyidea/privacyidea/wiki/concept:-LDAP-resolver-with-Kerberos-auth>`_.
+
+Caching
+"""""""
+
+The ``Cache Timeout`` configures a short living per process cache for LDAP users.
+The cache is not shared between different Python processes, if you are running more processes
+in Apache or Nginx. You can set this to ``0`` to deactivate this cache.
+
+Server Pools
+""""""""""""
+
+The ``Server pool retry rounds`` and ``Server pool skip timeout`` settings configure the behavior of
+the LDAP server pool. When establishing a LDAP connection, the resolver uses a round-robin
+strategy to select a LDAP server from the pool. If the current server is not reachable, it is removed
+from the pool and will be re-inserted after the number of seconds specified in the *skip timeout*.
+If the pool is empty after a round, a timeout is added before the next round is started.
+The ldap3 module defaults system wide to 10 seconds before starting the next round.
+This timeout can be changed by setting ``PI_LDAP_POOLING_LOOP_TIMEOUT`` to an
+integer in seconds in the :ref:`cfgfile`.
+If no reachable server could be found after the number of rounds specified in the *retry rounds*,
+the request fails.
+
+By default, knowledge about unavailable pool servers is not persisted between requests.
+Consequently, a new request may retry to reach unavailable servers, even though the *skip timeout*
+has not passed yet. If the *Per-process server pool* is enabled, knowledge about unavailable
+servers is persisted within each process. This setting may improve performance in situations in
+which a LDAP server from the pool is down for extended periods of time.
+
+Modifying users
+"""""""""""""""
+
+Starting with privacyIDEA 2.12, you can define the LDAP resolver as editable.
+I.e. you can create and modify users from within privacyIDEA.
+
+There are two additional configuration parameters for this case.
+
+``DN Template`` defines how the DN of the new LDAP object should be created. You can use *username*, *surname*,
+*givenname* and *basedn* to create the distinguished name.
+
+**Examples**::
+
+   CN=<givenname> <surname>,<basedn>
+
+   CN=<username>,OU=external users,<basedn>
+
+   uid=<username>,ou=users,o=example,c=com
+
+``Object Classes`` defines which object classes the user should be assigned to. This is a comma separated list.
+The usual object classes for Active Directory are::
+
+   top, person, organizationalPerson, user, inetOrgPerson
+
+Resolver settings
+~~~~~~~~~~~~~~~~~
+The ``LoginName attribute`` is the attribute that holds the login name. It
 can be changed to your needs.
 
 Starting with version 2.20 you can provide a list of attributes in
@@ -117,34 +196,34 @@ Starting with version 2.20 you can provide a list of attributes in
 
     sAMAccountName, userPrincipalName
 
-This way a user can login with either his sAMAccountName or his principalName.
+This way a user can login with either his ``sAMAccountName`` or his ``principalName``.
 
 The ``searchfilter`` is used to list all possible users, that can be used
-in this resolver. The searchfilter is used for forward and backward
+in this resolver. The search filter is used for forward and backward
 search the object in LDAP.
 
 The ``attribute mapping`` maps LDAP object attributes to user attributes in
 privacyIDEA. privacyIDEA knows the following attributes:
 
- * phone,
- * mobile,
- * email,
- * surname,
- * givenname,
- * password
- * accountExpires.
+ * ``phone``,
+ * ``mobile``,
+ * ``email``,
+ * ``surname``,
+ * ``givenname``,
+ * ``password``
+ * ``accountExpires``.
 
 The above attributes are used for privacyIDEA's normal functionality and are
-listed in the userview. However, with a SAML authentication request user
-attributes can be returned. (see :ref:`return_saml_attributes`). To return
-arbitrary attributes from the LDAP you can add additional keys to the
+listed in the :ref:`user_details`. However, with a SAML authentication request,
+the user attributes can be returned. (see :ref:`return_saml_attributes`). To return
+arbitrary attributes from the LDAP You can add additional keys to the
 attribute mapping with a key, you make up and the LDAP attribute like::
 
    "homedir": "homeDirectory",
    "studentID": "objectGUID"
 
-"homeDirectory" and "objectGUID" being the attributes in the LDAP directory
-and "homedir" and "studentID" the keys returned in a SAML authentication
+``"homeDirectory"`` and ``"objectGUID"`` being the attributes in the LDAP directory
+and ``"homedir"`` and ``"studentID"`` the keys returned in a SAML authentication
 request.
 
 The ``MULTIVALUEATTRIBUTES`` config value can be used to specify a list of
@@ -160,7 +239,7 @@ The ``MULTIVALUEATTRIBUTES`` can be well used with the ``samlcheck`` endpoint (s
 or with the policy
 :ref:`policy_add_user_in_response`.
 
-  
+
 The ``UID Type`` is the unique identifier for the LDAP object. If it is left
 blank, the distinguished name will be used. In case of OpenLDAP this can be
 *entryUUID* and in case of Active Directory *objectGUID*. For FreeIPA you
@@ -169,87 +248,28 @@ can use *ipaUniqueID*.
 .. note:: The attributes *entryUUID*, *objectGUID*, and *ipaUniqueID*
    are case sensitive!
 
+In case of Active Directory connections you might need to check the box
+``No anonymous referral chasing``. The underlying LDAP library is only
+able to do anonymous referral chasing. Active Directory will produce an
+error in this case [#adreferrals]_.
+
 The option ``No retrieval of schema information`` can be used to
 disable the retrieval of schema information [#ldapschema]_ in
 order to improve performance. This checkbox is deactivated by default
 and should only be activated after having ensured that schema information
 are unnecessary.
 
-The ``CACHE_TIMEOUT`` configures a short living per process cache for LDAP users.
-The cache is not shared between different Python processes, if you are running more processes
-in Apache or Nginx. You can set this to ``0`` to deactivate this cache.
-
-The *Server pool retry rounds* and *Server pool skip timeout* settings configure the behavior of
-the LDAP server pool. When establishing a LDAP connection, the resolver uses a round-robin
-strategy to select a LDAP server from the pool. If the current server is not reachable, it is removed
-from the pool and will be re-inserted after the number of seconds specified in the *skip timeout*.
-If the pool is empty after a round, a timeout is added before the next round is started.
-The ldap3 module defaults system wide to 10 seconds before starting the next round.
-This timeout can be changed by setting ``PI_LDAP_POOLING_LOOP_TIMEOUT`` to an integer in seconds in ``pi.cfg``.
-If no reachable server could be found after the number of rounds specified in the *retry rounds*,
-the request fails.
-
-By default, knowledge about unavailable pool servers is not persisted between requests.
-Consequently, a new request may retry to reach unavailable servers, even though the *skip timeout*
-has not passed yet. If the *Per-process server pool* is enabled, knowledge about unavailable
-servers is persisted within each process. This setting may improve performance in situations in
-which a LDAP server from the pool is down for extended periods of time.
-
-TLS Version
-~~~~~~~~~~~
-
-When using TLS, you may specify the TLS version to use. Starting from version 3.6, privacyIDEA offers
-TLS v1.3 by default.
-
-
-TLS certificates
-~~~~~~~~~~~~~~~~
-
-When using TLS with LDAP, you can tell privacyIDEA to verify the certificate. The according
-checkbox is visible in the WebUI if the target URL starts with *ldaps* or when using STARTTLS.
-
-You can specify a file with the trusted CA certificate, that signed the
-TLS certificate. The default CA filename is */etc/privacyidea/ldap-ca.crt*
-and can contain a list of base64 encoded CA certificates.
-PrivacyIDEA will use the CA file if specified. If you leave the field empty
-it will also try the system certificate store (*/etc/ssl/certs/ca-certificates.crt*
-or */etc/ssl/certs/ca-bundle.crt*).
-
-Modifying users
-~~~~~~~~~~~~~~~
-
-Starting with privacyIDEA 2.12, you can define the LDAP resolver as editable.
-I.e. you can create and modify users from within privacyIDEA.
-
-There are two additional configuration parameters for this case.
-
-``DN Template`` defines how the DN of the new LDAP object should be created. You can use *username*, *surname*,
-*givenname* and *basedn* to create the distinguished name.
-
-**Examples**:
-
-   CN=<givenname> <surname>,<basedn>
-
-   CN=<username>,OU=external users,<basedn>
-
-   uid=<username>,ou=users,o=example,c=com
-
-``Object Classes`` defines which object classes the user should be assigned to. This is a comma separated list.
-The usual object classes for Active Directory are
-
-   top, person, organizationalPerson, user, inetOrgPerson
-
 Expired Users
 ~~~~~~~~~~~~~
 
 .. index:: Expired Users
 
-You may set
+You may set::
 
     "accountExpires": "accountExpires"
 
 in the attribute mapping for Microsoft Active Directories. You can then call
-the user listing API with the parameter *accountExpires=1* and you will only
+the user listing API with the parameter ``accountExpires=1`` and you will only
 see expired accounts.
 
 This functionality is used with the script *privacyidea-expired-users*.
@@ -261,7 +281,7 @@ SQL resolver
 
 .. index:: SQL resolver, MySQL, PostgreSQL, Oracle, DB2, sqlite
 
-The SQL resolver can be used to retrieve users from any kind of 
+The SQL resolver can be used to retrieve users from any kind of
 SQL database like MySQL, PostgreSQL, Oracle, DB2 or sqlite.
 
 .. figure:: images/sql-resolver.png
@@ -275,20 +295,20 @@ In the field ``Driver`` you need to set a driver name as defined by the
 `SQLAlchemy  dialects <http://docs.sqlalchemy.org/en/rel_0_9/dialects/>`_
 like "mysql" or "postgres".
 
-In the ``SQL attributes`` frame you can specify how the users are 
+In the ``SQL attributes`` frame you can specify how the users are
 identified.
 
-The ``Database table`` contains the users. 
+The ``Database table`` contains the users.
 
 .. note:: At the moment, only one table
    is supported, i.e. if some of the user data like email address or telephone
    number is located in a second table, those data can not be retrieved.
-  
+
 The ``Limit`` is the SQL limit for a userlist request. This can be important
 if you have several thousand user entries in the table.
 
 The ``Attribute mapping`` defines which table column should be mapped to
-which privayIDEA attribute. The known attributes are:
+which privacyIDEA attribute. The known attributes are:
 
  * userid *(mandatory)*,
  * username *(mandatory)*,
@@ -340,13 +360,13 @@ SCIM resolver
 
 .. index:: SCIM resolver
 
-SCIM is a "System for Cross-domain Identity Management". SCIM is a REST-based 
+SCIM is a "System for Cross-domain Identity Management". SCIM is a REST-based
 protocol that can be used to ease identity management in the cloud.
 
 The SCIM resolver is tested in basic functions with OSIAM [#osiam]_,
 the "Open Source Identity & Access Management".
 
-To connect to a SCIM service you need to provide a URL to an authentication 
+To connect to a SCIM service you need to provide a URL to an authentication
 server and a URL to the resource server. The authentication server is used to
 authenticate the privacyIDEA server. The authentication is based on a ``Client``
 name and the ``Secret`` for this client.
@@ -464,7 +484,7 @@ However, cache entries are removed at some defined events:
 
 .. rubric:: Footnotes
 
+.. [#serverpool] https://ldap3.readthedocs.io/en/latest/server.html#server-pool
 .. [#adreferrals] https://techcommunity.microsoft.com/t5/azure-active-directory-identity/referral-chasing/ba-p/243177
 .. [#osiam] http://osiam.github.io
-.. [#serverpool] https://github.com/cannatag/ldap3/blob/master/docs/manual/source/server.rst#server-pool
 .. [#ldapschema] https://ldap3.readthedocs.io/en/latest/schema.html

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2020-02-27 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Initial write. Allow tokens to be initialized with an otpkey
 #
@@ -19,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-__doc__ = """This is the implementation of an Indexed Secret-Token.
+"""This is the implementation of an Indexed Secret-Token.
 It is a challenge response token, that asks the user for certain positions
 of the secret string.
 The user must know the secret and return the characters from the requested positions.
@@ -35,11 +33,11 @@ returns -1.
 
 import logging
 import datetime
-from privacyidea.lib.tokenclass import TokenClass
+from privacyidea.lib.tokenclass import TokenClass, AUTHENTICATIONMODE
 from privacyidea.lib.policy import SCOPE, ACTION, GROUP, get_action_values_from_options
 from privacyidea.lib.crypto import urandom, safe_compare
 from privacyidea.lib.log import log_with
-from privacyidea.lib import _
+from privacyidea.lib import _, lazy_gettext
 from privacyidea.lib.utils import to_unicode
 from privacyidea.lib.challenge import get_challenges
 from privacyidea.models import Challenge
@@ -48,7 +46,7 @@ from privacyidea.lib.error import ValidateError
 
 log = logging.getLogger(__name__)
 
-DEFAULT_CHALLENGE_TEXT = _("Please enter the positions {0!s} from your secret.")
+DEFAULT_CHALLENGE_TEXT = lazy_gettext("Please enter the positions {0!s} from your secret.")
 DEFAULT_POSITION_COUNT = 2
 
 
@@ -63,11 +61,14 @@ class IndexedSecretTokenClass(TokenClass):
     Implementation of the Indexed Secret Token Class, that asks the user for certain
     positions in a shared secret.
     """
+    mode = [AUTHENTICATIONMODE.CHALLENGE]
+
+    # The token type provides means to verify the enrollment
+    can_verify_enrollment = True
 
     def __init__(self, aToken):
         TokenClass.__init__(self, aToken)
-        self.set_type(u"indexedsecret")
-        self.mode = ['challenge']
+        self.set_type("indexedsecret")
 
     @staticmethod
     def get_class_type():
@@ -103,8 +104,10 @@ class IndexedSecretTokenClass(TokenClass):
                'policy': {SCOPE.AUTH: {
                    ACTION.CHALLENGETEXT: {
                        'type': 'str',
-                       'desc': _('Use an alternate challenge text for telling the '
-                                 'user which positions of the secret he should enter.'),
+                       'desc': _('Use an alternative challenge text for telling the '
+                                 'user which positions of the secret he should enter. You can also '
+                                 'use tags for automated replacement. Check out the documentation '
+                                 'for more details.'),
                        'group': "Indexed Secret Token"
                    },
                    PIIXACTION.COUNT: {
@@ -169,10 +172,11 @@ class IndexedSecretTokenClass(TokenClass):
         :return: nothing
 
         """
-        if 'genkey' not in param and 'otpkey' not in param:
+        if 'verify' not in param and 'genkey' not in param and 'otpkey' not in param:
             param['genkey'] = 1
 
         TokenClass.update(self, param, reset_failcount)
+
         return
 
     @log_with(log)
@@ -228,8 +232,7 @@ class IndexedSecretTokenClass(TokenClass):
             transactionid = transactionid or db_challenge.transaction_id
             return_message = return_message.format(position_str)
 
-        expiry_date = datetime.datetime.now() + \
-                                    datetime.timedelta(seconds=validity)
+        expiry_date = datetime.datetime.now() + datetime.timedelta(seconds=validity)
         attributes['valid_until'] = "{0!s}".format(expiry_date)
         reply_dict = {"attributes": attributes}
 
@@ -290,7 +293,7 @@ class IndexedSecretTokenClass(TokenClass):
                             # increase the received_count
                             challengeobject.set_otp_status()
                     else:
-                        log.debug("Length of password does not match the requested number of positions.")
+                        log.info("Length of password does not match the requested number of positions.")
                         # increase the received_count
                         challengeobject.set_otp_status()
 
@@ -332,8 +335,43 @@ class IndexedSecretTokenClass(TokenClass):
                                                                 options) or DEFAULT_POSITION_COUNT)
             if len(challengeobject_list) == 1:
                 session = int(challengeobject_list[0].session or "0") + 1
-                options["session"] = u"{0!s}".format(session)
+                options["session"] = "{0!s}".format(session)
                 if session < position_count:
                     return True
 
         return False
+
+    def prepare_verify_enrollment(self, options=None):
+        """
+        This is called, if the token should be enrolled in a way, that the user
+        needs to provide a proof, that the server can verify, that the token
+        was successfully enrolled. A challenge for the indexed secret token is created
+        and the user will later have to answer this.
+
+        The returned dictionary is added to the response in "detail" -> "verify".
+
+        :return: A dictionary with information that is needed to trigger the verification.
+        """
+        _, return_message, transaction_id, reply_dict = self.create_challenge(options=options)
+        return {"message": return_message}
+
+    def verify_enrollment(self, verify):
+        """
+        This is called during the 2nd step of the verified enrollment.
+        This method verifies the actual response from the user.
+        Returns true, if the verification was successful.
+
+        :param verify: The response given by the user
+        :return: True
+        """
+        # During the enrollment one challenge has been created. The token is not fit
+        # for authentication, yet. So there should only be one challenge for this token
+        # in the challenge table. Find it!
+        chals = get_challenges(serial=self.token.serial)
+        if len(chals) != 1:  # pragma: no cover
+            log.error("Something is wrong. There is more than one challenge!")
+        transaction_id = chals[0].transaction_id
+        r = self.check_challenge_response(passw=verify,
+                                          options={"transaction_id": transaction_id})
+        log.debug("Enrollment verified: {0!s}".format(r))
+        return r >= 0

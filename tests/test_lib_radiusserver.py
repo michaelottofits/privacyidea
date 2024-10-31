@@ -1,4 +1,3 @@
-# coding: utf-8
 """
 This test file tests the lib/radiusserver.py
 """
@@ -108,5 +107,5 @@ class RADIUSServerTestCase(MyTestCase):
                        secret="testing123", dictionary=DICT_FILE)
         self.assertTrue(r > 0)
         radius = get_radius("myserver")
-        r = RADIUSServer.request(radius.config, u"nönäscii", u"passwörd")
+        r = RADIUSServer.request(radius.config, "nönäscii", "passwörd")
         self.assertEqual(r, True)

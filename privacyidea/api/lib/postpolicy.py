@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2020-02-16 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Add QR codes for Authenticator Apps
 #  2016-02-07 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -44,13 +42,16 @@ The functions of this module are tested in tests/test_api_lib_policy.py
 import datetime
 import logging
 import traceback
+from urllib.parse import quote
 from privacyidea.lib.error import PolicyError, ValidateError
 from flask import g, current_app, make_response
 from privacyidea.lib.policy import SCOPE, ACTION, AUTOASSIGNVALUE, AUTHORIZED
 from privacyidea.lib.policy import DEFAULT_ANDROID_APP_URL, DEFAULT_IOS_APP_URL
+from privacyidea.lib.policy import DEFAULT_PREFERRED_CLIENT_MODE_LIST
 from privacyidea.lib.policy import Match
 from privacyidea.lib.token import get_tokens, assign_token, get_realms_of_token, get_one_token
-from privacyidea.lib.machine import get_hostname, get_auth_items
+from privacyidea.lib.machine import get_auth_items
+from privacyidea.lib.config import get_multichallenge_enrollable_tokentypes, get_token_class
 from .prepolicy import check_max_token_user, check_max_token_realm
 import functools
 import json
@@ -61,10 +62,15 @@ from privacyidea.api.lib.utils import get_all_params
 from privacyidea.lib.auth import ROLE
 from privacyidea.lib.user import User
 from privacyidea.lib.realm import get_default_realm
-from privacyidea.lib.subscriptions import subscription_status
-from privacyidea.lib.utils import create_img
+from privacyidea.lib.subscriptions import (subscription_status,
+                                           get_subscription,
+                                           check_subscription,
+                                           SubscriptionError,
+                                           EXPIRE_MESSAGE)
+from privacyidea.lib.utils import create_img, get_version
 from privacyidea.lib.config import get_privacyidea_node
 from privacyidea.lib.tokenclass import ROLLOUTSTATE
+from privacyidea.lib import _, lazy_gettext
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +83,15 @@ DEFAULT_TOKENTYPE = "hotp"
 DEFAULT_TIMEOUT_ACTION = "lockscreeen"
 DEFAULT_POLICY_TEMPLATE_URL = "https://raw.githubusercontent.com/privacyidea/" \
                               "policy-templates/master/templates/"
+BODY_TEMPLATE = lazy_gettext("""
+<--- Please describe your Problem in detail --->
+
+<--- Please provide as many additional information as possible --->
+
+privacyIDEA Version: {version}
+Subscriber: {subscriber_name}
+Subscriptions: {subscriptions}
+""")
 
 
 class postpolicy(object):
@@ -139,7 +154,7 @@ class postrequest(object):
 def sign_response(request, response):
     """
     This decorator is used to sign the response. It adds the nonce from the
-    request, if it exist and adds the nonce and the signature to the response.
+    request, if it exists and adds the nonce and the signature to the response.
 
     .. note:: This only works for JSON responses. So if we fail to decode the
        JSON, we just pass on.
@@ -157,10 +172,14 @@ def sign_response(request, response):
         return response
 
     priv_file_name = current_app.config.get("PI_AUDIT_KEY_PRIVATE")
+
+    # Disable the costly checking of private RSA keys when loading them.
+    check_private_key = not current_app.config.get("PI_RESPONSE_NO_PRIVATE_KEY_CHECK", False)
     try:
         with open(priv_file_name, 'rb') as priv_file:
             priv_key = priv_file.read()
-        sign_object = Sign(priv_key, public_key=None)
+        sign_object = Sign(priv_key, public_key=None,
+                           check_private_key=check_private_key)
     except (IOError, ValueError, TypeError) as e:
         log.info('Could not load private key from '
                  'file {0!s}: {1!r}!'.format(priv_file_name, e))
@@ -278,15 +297,15 @@ def check_tokeninfo(request, response):
                         key, regex, _r = tokeninfo_pol.split("/")
                         value = token_obj.get_tokeninfo(key, "")
                         if re.search(regex, value):
-                            log.debug(u"Regular expression {0!s} "
-                                      u"matches the tokeninfo field {1!s}.".format(regex, key))
+                            log.debug("Regular expression {0!s} "
+                                      "matches the tokeninfo field {1!s}.".format(regex, key))
                         else:
-                            log.info(u"Tokeninfo field {0!s} with contents {1!s} "
-                                     u"does not match {2!s}".format(key, value, regex))
+                            log.info("Tokeninfo field {0!s} with contents {1!s} "
+                                     "does not match {2!s}".format(key, value, regex))
                             raise PolicyError("Tokeninfo field {0!s} with contents does not"
                                               " match regular expression.".format(key))
                     except ValueError:
-                        log.warning(u"invalid tokeinfo policy: {0!s}".format(tokeninfo_pol))
+                        log.warning("invalid tokeinfo policy: {0!s}".format(tokeninfo_pol))
 
     return response
 
@@ -318,6 +337,54 @@ def no_detail_on_success(request, response):
     return response
 
 
+def preferred_client_mode(request, response):
+    """
+    This policy function is used to add the preferred client mode.
+    The admin can set the list of client modes in the policy in the
+    same order as  he preferred them. The faction will pick the first
+    client mode from the list, that is also in the multichallenge and
+    set it as preferred client mode
+
+    :param request:
+    :param response:
+    :return:
+    """
+    content = response.json
+    user_object = request.User
+
+    # get the preferred client mode from a policy definition
+    detail_pol = Match.user(g, scope=SCOPE.AUTH, action=ACTION.PREFERREDCLIENTMODE, user_object=user_object)\
+        .action_values(allow_white_space_in_action=True, unique=True)
+
+    if detail_pol:
+        # Split at whitespaces and strip
+        preferred_client_mode_list = str.split(list(detail_pol)[0])
+    else:
+        preferred_client_mode_list = DEFAULT_PREFERRED_CLIENT_MODE_LIST
+    if content.get("detail"):
+        detail = content.get("detail")
+        if detail.get("multi_challenge"):
+            multi_challenge = detail.get("multi_challenge")
+            client_modes = [x.get('client_mode') for x in multi_challenge]
+
+            try:
+                preferred = [x for x in preferred_client_mode_list if x in client_modes][0]
+                content.setdefault("detail", {})["preferred_client_mode"] = preferred
+            except IndexError as err:
+                content.setdefault("detail", {})["preferred_client_mode"] = 'interactive'
+                log.error('There was no acceptable client mode in the multi-challenge list. '
+                          'The preferred client mode is set to "interactive". '
+                          'Please check Your policy ({0!s}). '
+                          'Error: {1!s} '.format(preferred_client_mode_list, err))
+            except Exception as err:  # pragma no cover
+                content.setdefault("detail", {})["preferred_client_mode"] = 'interactive'
+                log.error('Something went wrong during setting the preferred '
+                          'client mode. Error: {0!s}'.format(err))
+
+    response.set_data(json.dumps(content))
+    return response
+
+
 def add_user_detail_to_response(request, response):
     """
     This policy decorated is used in the AUTHZ scope.
@@ -337,7 +404,7 @@ def add_user_detail_to_response(request, response):
         # The policy was set, we need to add the user
         #  details
         ui = request.User.info.copy()
-        ui["password"] = ""
+        ui["password"] = ""  # nosec B105 # Hide a potential password
         for key, value in ui.items():
             if type(value) == datetime.datetime:
                 ui[key] = str(value)
@@ -456,14 +523,18 @@ def offline_info(request, response):
     if content.get("result").get("value") is True and g.client_ip:
         # check if there is a MachineToken definition
         serial = content.get("detail", {}).get("serial")
-        try:
-            auth_items = get_auth_items(serial=serial, application="offline",
-                                        challenge=request.all_data.get("pass"))
-            if auth_items:
-                content["auth_items"] = auth_items
-                response.set_data(json.dumps(content))
-        except Exception as exx:
-            log.info(exx)
+        if serial:
+            try:
+                auth_items = get_auth_items(serial=serial, application="offline",
+                                            challenge=request.all_data.get("pass"),
+                                            user_agent=request.user_agent.string)
+                if auth_items:
+                    content["auth_items"] = auth_items
+                    response.set_data(json.dumps(content))
+                    # Also update JSON in the response object
+                    response.get_jsons()
+            except Exception as exx:
+                log.info(exx)
     return response
 
 
@@ -524,6 +595,8 @@ def get_webui_settings(request, response):
                                      user=loginname, realm=realm).any()
         hide_buttons = Match.generic(g, scope=SCOPE.WEBUI, action=ACTION.HIDE_BUTTONS,
                                      user=loginname, realm=realm).any()
+        deletion_confirmation = Match.generic(g, scope=SCOPE.WEBUI, action=ACTION.DELETION_CONFIRMATION,
+                                     user=loginname, realm=realm).any()
         default_tokentype_pol = Match.generic(g, scope=SCOPE.WEBUI, action=ACTION.DEFAULT_TOKENTYPE,
                                               user=loginname, realm=realm).action_values(unique=True)
         show_seed = Match.generic(g, scope=SCOPE.WEBUI, action=ACTION.SHOW_SEED,
@@ -535,6 +608,10 @@ def get_webui_settings(request, response):
                                                  user=loginname, realm=realm).any()
         qr_custom_authenticator_url = Match.generic(g, scope=SCOPE.WEBUI, action=ACTION.SHOW_CUSTOM_AUTHENTICATOR,
                                                     user=loginname, realm=realm).action_values(unique=True)
+        logout_redirect_url_pol = Match.generic(g, scope=SCOPE.WEBUI, action=ACTION.LOGOUT_REDIRECT,
+                                                user=loginname, realm=realm).action_values(unique=True)
+        require_description = Match.generic(g, scope=SCOPE.ENROLL, action=ACTION.REQUIRE_DESCRIPTION,
+                                            user=loginname, realm=realm).action_values(unique=False)
 
         qr_image_android = create_img(DEFAULT_ANDROID_APP_URL) if qr_android_authenticator else None
         qr_image_ios = create_img(DEFAULT_IOS_APP_URL) if qr_ios_authenticator else None
@@ -542,7 +619,9 @@ def get_webui_settings(request, response):
         audit_page_size = DEFAULT_AUDIT_PAGE_SIZE
         token_page_size = DEFAULT_PAGE_SIZE
         user_page_size = DEFAULT_PAGE_SIZE
+        require_description = list(require_description.keys())
         default_tokentype = DEFAULT_TOKENTYPE
+        logout_redirect_url = ""
         if len(audit_page_size_pol) == 1:
             audit_page_size = int(list(audit_page_size_pol)[0])
         if len(token_page_size_pol) == 1:
@@ -551,6 +630,8 @@ def get_webui_settings(request, response):
             user_page_size = int(list(user_page_size_pol)[0])
         if len(default_tokentype_pol) == 1:
             default_tokentype = list(default_tokentype_pol)[0]
+        if len(logout_redirect_url_pol) == 1:
+            logout_redirect_url = list(logout_redirect_url_pol)[0]
 
         logout_time = DEFAULT_LOGOUT_TIME
         if len(logout_time_pol) == 1:
@@ -592,6 +673,7 @@ def get_webui_settings(request, response):
         content["result"]["value"]["token_rollover"] = token_rollover
         content["result"]["value"]["hide_welcome"] = hide_welcome
         content["result"]["value"]["hide_buttons"] = hide_buttons
+        content["result"]["value"]["deletion_confirmation"] = deletion_confirmation
         content["result"]["value"]["show_seed"] = show_seed
         content["result"]["value"]["show_node"] = get_privacyidea_node() if show_node else ""
         content["result"]["value"]["subscription_status"] = subscription_status()
@@ -600,6 +682,33 @@ def get_webui_settings(request, response):
         content["result"]["value"]["qr_image_android"] = qr_image_android
         content["result"]["value"]["qr_image_ios"] = qr_image_ios
         content["result"]["value"]["qr_image_custom"] = qr_image_custom
+        content["result"]["value"]["logout_redirect_url"] = logout_redirect_url
+        content["result"]["value"]["require_description"] = require_description
+        if role == ROLE.ADMIN:
+            # Add a support mailto, for administrators with systemwrite rights.
+            subscriptions = get_subscription("privacyidea")
+            if len(subscriptions) == 1:
+                subscription = subscriptions[0]
+                try:
+                    version = get_version()
+                    subject = "Problem with {0!s}".format(version)
+                    check_subscription("privacyidea")
+                except SubscriptionError:
+                    subject = EXPIRE_MESSAGE
+                # Check policy, if the admin is allowed to save config
+                action_allowed = Match.generic(g, scope=role,
+                                               action=ACTION.SYSTEMWRITE,
+                                               adminuser=loginname,
+                                               adminrealm=realm).allowed()
+                if action_allowed:
+                    body = str(BODY_TEMPLATE).format(subscriptions=subscriptions,
+                                                     version=version,
+                                                     subscriber_name=subscription.get("for_name"))
+
+                    body = quote(body)
+                    content["result"]["value"]["supportmail"] = \
+                        ("mailto:{0!s}?subject={1!s}&body={2!s}").format(
+                            subscription.get("by_email"), subject, body)
         response.set_data(json.dumps(content))
     return response
 
@@ -676,6 +785,48 @@ def autoassign(request, response):
     return response
 
 
+def multichallenge_enroll_via_validate(request, response):
+    """
+    This is a post decorator to allow enrolling tokens via /validate/check.
+    It checks the AUTH policy ENROLL_VIA_MULTICHALLENGE and enrolls the
+    corresponding token type.
+    It also modifies the response accordingly, so that the client/plugin can
+    display necessary data for the enrollment to the user.
+
+    :param request:
+    :param response:
+    :return:
+    """
+    content = response.json
+    result = content.get("result")
+    # check, if the authentication was successful, then we need to do nothing
+    if result.get("value") and result.get("authentication") == "ACCEPT":
+        user_obj = request.User
+        if user_obj.login and user_obj.realm:
+            enroll_pol = Match.user(g, scope=SCOPE.AUTH, action=ACTION.ENROLL_VIA_MULTICHALLENGE,
+                                    user_object=user_obj).action_values(unique=True, write_to_audit_log=False)
+            # check if we have a multi enroll policy
+            if enroll_pol:
+                tokentype = list(enroll_pol)[0]
+                # TODO: Somehow we need to add condition, when we should stop enrolling!
+                #       Here: If the user has one token of this type.
+                if len(get_tokens(tokentype=tokentype, user=user_obj)) == 0:
+                    if tokentype.lower() in get_multichallenge_enrollable_tokentypes():
+                        # Now get the alternative text from the policies
+                        text_pol = Match.user(g, scope=SCOPE.AUTH, action=ACTION.ENROLL_VIA_MULTICHALLENGE_TEXT,
+                                              user_object=user_obj).action_values(unique=True,
+                                                                                  write_to_audit_log=False,
+                                                                                  allow_white_space_in_action=True)
+                        message = None
+                        if text_pol:
+                            message = list(text_pol)[0]
+                        tclass = get_token_class(tokentype)
+                        tclass.enroll_via_validate(g, content, user_obj, message)
+                        response.set_data(json.dumps(content))
+
+    return response
+
+
 def construct_radius_response(request, response):
     """
     This decorator implements the /validate/radiuscheck endpoint.
@@ -683,6 +834,9 @@ def construct_radius_response(request, response):
     results in an empty response with a HTTP 204 status code.
     An unsuccessful authentication results in an empty response
     with a HTTP 400 status code.
+
+    This needs to be the last decorator, since the JSON response is then lost.
+
     :return:
     """
     if request.url_rule.rule == '/validate/radiuscheck':
@@ -733,7 +887,7 @@ def mangle_challenge_response(request, response):
             messages = sorted(set(messages))
             if message[-4:].lower() in ["<ol>", "<ul>"]:
                 for m in messages:
-                    message += u"<li>{0!s}</li>\n".format(m)
+                    message += "<li>{0!s}</li>\n".format(m)
             else:
                 message += "\n"
                 message += ", ".join(messages)
@@ -751,7 +905,7 @@ def is_authorized(request, response):
     """
     This policy decorator is used in the AUTHZ scope to
     decorate the /validate/check and /validate/triggerchallenge endpoint.
-    I will cause authentication to fail, if the policy
+    It will cause authentication to fail, if the policy
     authorized=deny_access is set.
 
     :param request:
@@ -776,14 +930,18 @@ def check_verify_enrollment(request, response):
     """
     This policy decorator is used in the ENROLL scope to
     decorate the /token/init
-    If will check for action=verify_enrollment and ask the user
+    It will check for action=verify_enrollment and ask the user
     in a 2nd step to provide information to verify, that the token was successfully enrolled.
 
     :param request:
     :param response:
     :return:
     """
-    serial = response.json.get("detail").get("serial")
+    serial = response.json.get("detail", {}).get("serial")
+    if not serial:
+        log.info("No serial number found in response. Can not do check_verify_enrollment.")
+        return response
+
     verify = request.all_data.get("verify")
     if verify:
         # In case we are in a 2nd step verification, we must early exit
@@ -809,7 +967,8 @@ def check_verify_enrollment(request, response):
                     g.audit_object.add_policy(verify_pol_dict.get(toks))
             if do_verify_enrollment:
                 content = response.json
-                content["detail"]["verify"] = tokenobj.prepare_verify_enrollment()
+                options = {"g": g, "user": request.User, "exception": request.all_data.get("exception", 0)}
+                content["detail"]["verify"] = tokenobj.prepare_verify_enrollment(options=options)
                 content["detail"]["rollout_state"] = ROLLOUTSTATE.VERIFYPENDING
                 tokenobj.token.rollout_state = ROLLOUTSTATE.VERIFYPENDING
                 tokenobj.token.save()

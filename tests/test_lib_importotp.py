@@ -1,18 +1,25 @@
-# coding: utf-8
 """
 This test file tests the lib.importotp
 
 """
-import pytest
+import gnupg
+import unittest
 
 from .base import MyTestCase
 from privacyidea.lib.importotp import (parseOATHcsv, parseYubicoCSV,
-                                       parseSafeNetXML, ImportException,
+                                       parseSafeNetXML,
                                        parsePSKCdata, GPGImport)
+from privacyidea.lib.error import TokenImportException
 from privacyidea.lib.token import remove_token
 from privacyidea.lib.token import init_token
 from privacyidea.lib.importotp import export_pskc
 from privacyidea.lib.utils import hexlify_and_unicode
+
+try:
+    _g = gnupg.GPG()
+    gpg_available = True
+except OSError as _e:
+    gpg_available = False
 
 XML_PSKC_PASSWORD_PREFIX = """<?xml version="1.0" encoding="UTF-8"?>
   <KeyContainer
@@ -600,13 +607,13 @@ class ImportOTPTestCase(MyTestCase):
         self.assertEqual(tokens.get("tok3").get("user").get("resolver"), "resolver3")
 
     def test_01_import_aladdin_xml(self):
-        self.assertRaises(ImportException, parseSafeNetXML, 'no xml')
+        self.assertRaises(TokenImportException, parseSafeNetXML, 'no xml')
         tokens = parseSafeNetXML(ALADDINXML)
         self.assertTrue(len(tokens) == 2)
         self.assertTrue("00040008CFA52" in tokens, tokens)
 
         # fail to import without toplevel TOKENS tag
-        self.assertRaises(ImportException, parseSafeNetXML,
+        self.assertRaises(TokenImportException, parseSafeNetXML,
                           ALADDINXML_WITHOUT_TOKENS)
 
     def test_02_import_yubikey(self):
@@ -625,7 +632,7 @@ class ImportOTPTestCase(MyTestCase):
         self.assertEqual(tokens["UBOM10944003_1"]["type"], "hotp")
 
     def test_03_import_pskc(self):
-        self.assertRaises(ImportException, parsePSKCdata, 'not xml')
+        self.assertRaises(TokenImportException, parsePSKCdata, 'not xml')
 
         tokens, _ = parsePSKCdata(XML_PSKC)
         self.assertEqual(len(tokens), 7)
@@ -688,7 +695,7 @@ class ImportOTPTestCase(MyTestCase):
     def test_05_import_pskc_password(self):
         password = "qwerty"
 
-        self.assertRaises(ImportException, parsePSKCdata,
+        self.assertRaises(TokenImportException, parsePSKCdata,
                           XML_PSKC_PASSWORD_PREFIX)
 
         tokens, _ = parsePSKCdata(XML_PSKC_PASSWORD_PREFIX, password=password)
@@ -703,7 +710,7 @@ class ImportOTPTestCase(MyTestCase):
     def test_06_export_pskc(self):
         # create three tokens
         t1 = init_token({"serial": "t1", "type": "hotp", "otpkey": "123456",
-                         "description": u"söme ünicøde"})
+                         "description": "söme ünicøde"})
         t2 = init_token({"serial": "t2", "type": "totp", "otpkey": "123456",
                          "description": "something <with> xml!"})
         t3 = init_token({"serial": "t3", "type": "spass", "otpkey": "123456"})
@@ -732,11 +739,12 @@ class ImportOTPTestCase(MyTestCase):
         self.assertEqual(tokens.get("t2").get("timeStep"), "30")
         self.assertEqual(tokens.get("t2").get("description"), "something <with> xml!")
         # password token
-        self.assertEqual(tokens.get("t4").get("otpkey"), u"lässig")
+        self.assertEqual(tokens.get("t4").get("otpkey"), "lässig")
 
 
 class GPGTestCase(MyTestCase):
 
+    @unittest.skipIf(not gpg_available, "'gpg' binary not available")
     def test_00_gpg_decrypt(self):
         GPG = GPGImport({"PI_GNUPG_HOME": "tests/testdata/gpg"})
         pubkeys = GPG.get_publickeys()

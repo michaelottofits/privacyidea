@@ -88,7 +88,7 @@ resync
 
 type: bool
 
-The user is allowed to resynchronize the token if it has got out 
+The user is allowed to resynchronize the token if it has got out
 of synchronization.
 
 reset
@@ -101,7 +101,7 @@ The user is allowed to reset the failcounter of the token.
 setpin
 ~~~~~~
 
-type: bool 
+type: bool
 
 The user is allowed to set the OTP PIN for his tokens.
 
@@ -267,6 +267,8 @@ email with a link to reset the password is sent to the user.
 
 
 .. _user_policy_2step:
+.. _hotp-2step:
+.. _totp-2step:
 
 hotp_2step and totp_2step
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -281,7 +283,7 @@ This works in conjunction with the enrollment parameters :ref:`2step_parameters`
 
 Such a policy can also be set for the administrator. See :ref:`admin_policy_2step`.
 
-.. note:: This does not work in combination with the enrollment policy :ref:`verify_enrollment`, since
+.. note:: This does not work in combination with the enrollment policy :ref:`policy_verify_enrollment`, since
    the usage of 2step already ensures, that the user has successfully scanned the QR code.
 
 sms_gateways
@@ -289,11 +291,15 @@ sms_gateways
 
 type: string
 
-Usually an SMS tokens sends the SMS via the SMS gateway that is system wide defined in the token settings.
+Usually an SMS token sends the SMS via the SMS gateway that is defined system
+wide in the token settings.
 This policy takes a blank separated list of configured SMS gateways.
 It allows the user to define an individual SMS gateway during token enrollment.
 
 New in version 3.0.
+
+.. _hotp-hashlib:
+.. _totp-hashlib:
 
 hotp_hashlib and totp_hashlib
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -304,6 +310,9 @@ Force the user to enroll HOTP/TOTP Tokens with the specified hashlib.
 The corresponding input selector will be disabled/hidden in the web UI.
 Possible values are *sha1*, *sha256* and *sha512*, default is *sha1*.
 
+.. _hotp-otplen:
+.. _totp-otplen:
+
 hotp_otplen and totp_otplen
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -312,6 +321,9 @@ type: int
 Force the user to enroll HOTP/TOTP Tokens with the specified otp length.
 The corresponding input selector will be disabled/hidden in the web UI.
 Possible values are *6* or *8*, default is *6*.
+
+.. _hotp-force-server-generate:
+.. _totp-force-server-generate:
 
 hotp_force_server_generate and totp_force_server_generate
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -398,3 +410,75 @@ It uses the same setting as the admin policy :ref:`admin_delete_custom_user_attr
    Use with CAUTION!
 
 New in version 3.6
+
+container_state
+~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows the users to edit the states of their own containers.
+
+New in version 3.10
+
+container_description
+~~~~~~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows the users to edit the description of their own containers.
+
+New in version 3.10
+
+container_create
+~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows the users to create new containers.
+
+New in version 3.10
+
+container_delete
+~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows the users to delete their own containers.
+
+New in version 3.10
+
+container_add_token
+~~~~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows the users to add their own tokens to their own containers.
+
+New in version 3.10
+
+container_remove_token
+~~~~~~~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows the users to remove their own tokens from their own containers.
+
+New in version 3.10
+
+container_assign_user
+~~~~~~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows users to assign themselves to containers without an owner.
+
+New in version 3.10
+
+container_unassign_user
+~~~~~~~~~~~~~~~~~~~~~~~
+
+type: bool
+
+This action allows users to unassign themselves from containers.
+
+New in version 3.10

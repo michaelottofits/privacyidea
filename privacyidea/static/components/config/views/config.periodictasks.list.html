@@ -1,5 +1,5 @@
 <div class="table-responsive">
-    <table class="table table-bordered table-responsive table-striped">
+    <table class="table table-bordered table-responsive table-striped table-capitalize-header">
         <thead>
         <tr>
             <th translate>Order</th>
@@ -8,7 +8,7 @@
             <th translate>Description</th>
             <th translate>Interval</th>
             <th translate>Taskmodule</th>
-            <th translate>Nodes</th>
+            <th translate>privacyIDEA Nodes</th>
             <th translate>Options</th>
         </tr>
         </thead>
@@ -49,7 +49,8 @@
             <td>
                 <button class="btn btn-danger"
                         ng-show="checkRight('periodictask_write')"
-                        ng-click="delPeriodicTask(ptask.id)">
+                        aria-label="{{ 'Do you really want to delete this periodic task?' | translate }}"
+                        ng-click="confirmDelete(delPeriodicTask, ptask.id)">
                         <span class="glyphicon glyphicon-trash"></span>
                         <span translate>Delete</span>
                 </button>

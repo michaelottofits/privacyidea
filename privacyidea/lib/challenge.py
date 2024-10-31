@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #  privacyIDEA is a fork of LinOTP
 #
 #  2014-12-07 Cornelius Kölbel <cornelius@privacyidea.org>
@@ -27,11 +26,11 @@ The method is tested in test_lib_challenges
 """
 
 import logging
-import six
 from .log import log_with
-from ..models import Challenge
-from privacyidea.lib.error import ParameterError
+from ..models import Challenge, db
+
 log = logging.getLogger(__name__)
+
 
 
 @log_with(log)
@@ -90,7 +89,7 @@ def get_challenges_paginate(serial=None, transaction_id=None,
     sql_query = _create_challenge_query(serial=serial,
                                         transaction_id=transaction_id)
 
-    if isinstance(sortby, six.string_types):
+    if isinstance(sortby, str):
         # convert the string to a Challenge column
         cols = Challenge.__table__.columns
         sortby = cols.get(sortby)
@@ -100,15 +99,14 @@ def get_challenges_paginate(serial=None, transaction_id=None,
     else:
         sql_query = sql_query.order_by(sortby.asc())
 
-    pagination = sql_query.paginate(page, per_page=psize,
-                                    error_out=False)
+    pagination = db.paginate(sql_query, page=page, per_page=psize, error_out=False)
     challenges = pagination.items
     prev = None
     if pagination.has_prev:
         prev = page-1
-    next = None
+    next_page = None
     if pagination.has_next:
-        next = page + 1
+        next_page = page + 1
     challenge_list = []
     for challenge in challenges:
         challenge_dict = challenge.get()
@@ -116,7 +114,7 @@ def get_challenges_paginate(serial=None, transaction_id=None,
 
     ret = {"challenges": challenge_list,
            "prev": prev,
-           "next": next,
+           "next": next_page,
            "current": page,
            "count": pagination.total}
     return ret

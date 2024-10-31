@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #  2018-10-31 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Let the client choose to get a HTTP 500 Error code if
 #             SMS fails.
@@ -37,7 +36,7 @@
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-__doc__ = """This is the implementation of an Email-Token, that sends OTP
+"""This is the implementation of an Email-Token, that sends OTP
 values via SMTP.
 
 The following config entries are used:
@@ -69,12 +68,13 @@ import logging
 import traceback
 import datetime
 from privacyidea.lib.tokens.smstoken import HotpTokenClass
-from privacyidea.lib.tokens.hotptoken import VERIFY_ENROLLMENT_MESSAGE
-from privacyidea.lib.config import get_from_config
+from privacyidea.lib.tokenclass import CHALLENGE_SESSION, AUTHENTICATIONMODE
+from privacyidea.lib.config import get_from_config, get_email_validators
 from privacyidea.api.lib.utils import getParam
 from privacyidea.lib.utils import is_true, create_tag_dict
 from privacyidea.lib.policy import SCOPE, ACTION, GROUP, get_action_values_from_options
 from privacyidea.lib.policy import Match
+from privacyidea.lib.error import ValidateError
 from privacyidea.lib.log import log_with
 from privacyidea.lib import _
 from privacyidea.models import Challenge
@@ -102,11 +102,11 @@ class EmailTokenClass(HotpTokenClass):
     EMAIL_ADDRESS_KEY = "email"
     # The HOTP token provides means to verify the enrollment
     can_verify_enrollment = True
+    mode = [AUTHENTICATIONMODE.CHALLENGE]
 
     def __init__(self, aToken):
         HotpTokenClass.__init__(self, aToken)
-        self.set_type(u"email")
-        self.mode = ['challenge']
+        self.set_type("email")
         # we support various hashlib methods, but only on create
         # which is effectively set in the update
         self.hashlibStr = get_from_config("hotp.hashlib", "sha1")
@@ -115,7 +115,7 @@ class EmailTokenClass(HotpTokenClass):
     def _email_address(self):
         if is_true(self.get_tokeninfo("dynamic_email")):
             email = self.user.info.get(self.EMAIL_ADDRESS_KEY)
-            if type(email) == list and email:
+            if isinstance(email, list) and email:
                 # If there is a non-empty list, we use the first entry
                 email = email[0]
         else:
@@ -179,8 +179,10 @@ class EmailTokenClass(HotpTokenClass):
                                  'one EMail OTP.')},
                    ACTION.CHALLENGETEXT: {
                        'type': 'str',
-                       'desc': _('Use an alternate challenge text for telling the '
-                                 'user to enter the code from the eMail.')
+                       'desc': _('Use an alternative challenge text for telling the '
+                                 'user to enter the code from the e-mail. You can also '
+                                 'use tags for automated replacement. Check out the documentation '
+                                 'for more details.')
                    },
                },
                    SCOPE.ENROLL: {
@@ -193,10 +195,10 @@ class EmailTokenClass(HotpTokenClass):
                            'type': 'int',
                            'desc': _("The user may only have this maximum number of active email tokens assigned."),
                            'group': GROUP.TOKEN
+                       }
                    }
                }
-           }
-        }
+               }
 
         if key:
             ret = res.get(key, {})
@@ -273,28 +275,35 @@ class EmailTokenClass(HotpTokenClass):
         return_message = get_action_values_from_options(SCOPE.AUTH,
                                                         "{0!s}_{1!s}".format(self.get_class_type(),
                                                                              ACTION.CHALLENGETEXT),
-                                                        options) or _("Enter the OTP from the Email:")
+                                                        options) or _("Enter the OTP from the Email")
         reply_dict = {'attributes': {'state': transactionid}}
         validity = int(get_from_config("email.validtime", 120))
 
         if self.is_active() is True:
             counter = self.get_otp_count()
             log.debug("counter={0!r}".format(counter))
-            self.inc_otp_counter(counter, reset=False)
-            # At this point we must not bail out in case of an
-            # Gateway error, since checkPIN is successful. A bail
-            # out would cancel the checking of the other tokens
+
+            # At this point we must not bail out in case of a
+            # Gateway error, since checkPIN is successful. A bailout
+            # would cancel the checking of the other tokens
             try:
-                message_template, mimetype = self._get_email_text_or_subject(options)
-                subject_template, _n = self._get_email_text_or_subject(options,
-                                                                   EMAILACTION.EMAILSUBJECT,
-                                                                   "Your OTP")
+                data = None
+                if options.get("session") != CHALLENGE_SESSION.ENROLLMENT:
+                    # Only if this is NOT a multichallenge enrollment, we try to send the email
+                    self.inc_otp_counter(counter, reset=False)
+                    message_template, mimetype = self._get_email_text_or_subject(options)
+                    subject_template, _n = self._get_email_text_or_subject(options,
+                                                                           EMAILACTION.EMAILSUBJECT,
+                                                                           "Your OTP")
+                    success, sent_message = self._compose_email(
+                        options=options,
+                        message=message_template,
+                        subject=subject_template,
+                        mimetype=mimetype)
 
                 # Create the challenge in the database
                 if is_true(get_from_config("email.concurrent_challenges")):
                     data = self.get_otp()[2]
-                else:
-                    data = None
                 db_challenge = Challenge(self.token.serial,
                                          transaction_id=transactionid,
                                          challenge=options.get("challenge"),
@@ -303,23 +312,18 @@ class EmailTokenClass(HotpTokenClass):
                                          validitytime=validity)
                 db_challenge.save()
                 transactionid = transactionid or db_challenge.transaction_id
-                # We send the email after creating the challenge for testing.
-                success, sent_message = self._compose_email(
-                    message=message_template,
-                    subject=subject_template,
-                    mimetype=mimetype)
 
             except Exception as e:
                 info = _("The PIN was correct, but the "
                          "EMail could not be sent!")
-                log.warning(info + " ({0!s})".format(e))
-                log.debug(u"{0!s}".format(traceback.format_exc()))
+                log.warning(info + " ({0!r})".format(e))
+                log.debug("{0!s}".format(traceback.format_exc()))
                 return_message = info
                 if is_true(options.get("exception")):
                     raise Exception(info)
 
         expiry_date = datetime.datetime.now() + \
-                                    datetime.timedelta(seconds=validity)
+                      datetime.timedelta(seconds=validity)
         reply_dict['attributes']['valid_until'] = "{0!s}".format(expiry_date)
 
         return success, return_message, transactionid, reply_dict
@@ -331,14 +335,15 @@ class EmailTokenClass(HotpTokenClass):
         check the otpval of a token against a given counter
         and the window
 
-        :param passw: the to be verified passw/pin
-        :type passw: string
+        :param anOtpVal: the to be verified passw/pin
+        :type anOtpVal: string
 
         :return: counter if found, -1 if not found
         :rtype: int
         """
         options = options or {}
         ret = HotpTokenClass.check_otp(self, anOtpVal, counter, window, options)
+
         if ret < 0 and is_true(get_from_config("email.concurrent_challenges")):
             if safe_compare(options.get("data"), anOtpVal):
                 # We authenticate from the saved challenge
@@ -346,10 +351,11 @@ class EmailTokenClass(HotpTokenClass):
         if ret >= 0 and self._get_auto_email(options):
             message, mimetype = self._get_email_text_or_subject(options)
             subject, _ = self._get_email_text_or_subject(options,
-                                                      action=EMAILACTION.EMAILSUBJECT,
-                                                      default="Your OTP")
+                                                         action=EMAILACTION.EMAILSUBJECT,
+                                                         default="Your OTP")
             self.inc_otp_counter(ret, reset=False)
-            success, message = self._compose_email(message=message,
+            success, message = self._compose_email(options=options,
+                                                   message=message,
                                                    subject=subject,
                                                    mimetype=mimetype)
             log.debug("AutoEmail: send new SMS: {0!s}".format(success))
@@ -381,7 +387,6 @@ class EmailTokenClass(HotpTokenClass):
             if len(messages) == 1:
                 message = list(messages)[0]
 
-        message = message.format(challenge=options.get("challenge"))
         if message.startswith("file:"):
             # We read the template from the file.
             try:
@@ -390,8 +395,8 @@ class EmailTokenClass(HotpTokenClass):
                     mimetype = "html"
             except Exception as e:  # pragma: no cover
                 message = default
-                log.warning(u"Failed to read email template: {0!r}".format(e))
-                log.debug(u"{0!s}".format(traceback.format_exc()))
+                log.warning("Failed to read email template: {0!r}".format(e))
+                log.debug("{0!s}".format(traceback.format_exc()))
 
         return message, mimetype
 
@@ -401,7 +406,7 @@ class EmailTokenClass(HotpTokenClass):
         This returns the AUTOEMAIL setting.
 
         :param options: contains user and g object.
-        :optins type: dict
+        :type options: dict
         :return: True if an SMS should be sent automatically
         :rtype: bool
         """
@@ -415,7 +420,7 @@ class EmailTokenClass(HotpTokenClass):
         return autosms
 
     @log_with(log)
-    def _compose_email(self, message="<otp>", subject="Your OTP", mimetype="plain"):
+    def _compose_email(self, message="<otp>", subject="Your OTP", mimetype="plain", options=None):
         """
         send email
 
@@ -433,6 +438,8 @@ class EmailTokenClass(HotpTokenClass):
         recipient = self._email_address
         otp = self.get_otp()[2]
         serial = self.get_serial()
+        options = options or {}
+        challenge = options.get("challenge")
 
         message = message.replace("<otp>", otp)
         message = message.replace("<serial>", serial)
@@ -442,7 +449,8 @@ class EmailTokenClass(HotpTokenClass):
                                tokentype=self.get_tokentype(),
                                recipient={"givenname": self.user.info.get("givenname") if self.user else "",
                                           "surname": self.user.info.get("surname") if self.user else ""},
-                               escape_html=mimetype.lower() == "html")
+                               escape_html=mimetype.lower() == "html",
+                               challenge=challenge)
 
         message = message.format(otp=otp, **tags)
 
@@ -453,7 +461,7 @@ class EmailTokenClass(HotpTokenClass):
 
         log.debug("sending Email to {0!r}".format(recipient))
 
-        # The token specific identifier has priority over the system wide identifier
+        # The token specific identifier has priority over the system-wide identifier
         identifier = self.get_tokeninfo("email.identifier") or get_from_config("email.identifier")
         if identifier:
             # New way to send email
@@ -494,7 +502,7 @@ class EmailTokenClass(HotpTokenClass):
 
         return r, description
 
-    def prepare_verify_enrollment(self):
+    def prepare_verify_enrollment(self, options=None):
         """
         This is called, if the token should be enrolled in a way, that the user
         needs to provide a proof, that the server can verify, that the token
@@ -505,5 +513,80 @@ class EmailTokenClass(HotpTokenClass):
 
         :return: A dictionary with information that is needed to trigger the verification.
         """
-        self.create_challenge()
-        return {"message": VERIFY_ENROLLMENT_MESSAGE}
+        # TODO: how should we handle errors when sending the mail?
+        #  Currently we just return the message without checking the result
+        _res, msg, _tid, _rdict = self.create_challenge(options=options)
+        return {"message": msg}
+
+    @classmethod
+    def enroll_via_validate(cls, g, content, user_obj, message=None):
+        """
+        This class method is used in the policy ENROLL_VIA_MULTICHALLENGE.
+        It enrolls a new token of this type and returns the necessary information
+        to the client by modifying the content.
+
+        :param g: context object
+        :param content: The content of a response
+        :param user_obj: A user object
+        :param message: An alternative message displayed to the user during enrollment
+        :return: None, the content is modified
+        """
+        from privacyidea.lib.token import init_token
+        from privacyidea.lib.tokenclass import CLIENTMODE
+        token_obj = init_token({"type": cls.get_class_type(),
+                                "dynamic_email": 1}, user=user_obj)
+        content.get("result")["value"] = False
+        content.get("result")["authentication"] = "CHALLENGE"
+
+        detail = content.setdefault("detail", {})
+        # Create a challenge!
+        options = {"session": CHALLENGE_SESSION.ENROLLMENT, "g": g, "user": user_obj}
+        c = token_obj.create_challenge(options=options)
+        # get details of token
+        detail["transaction_ids"] = [c[2]]
+        chal = {"transaction_id": c[2],
+                "image": None,
+                "client_mode": CLIENTMODE.INTERACTIVE,
+                "serial": token_obj.token.serial,
+                "type": token_obj.type,
+                "message": message or _("Please enter your new email address!")}
+        detail["multi_challenge"] = [chal]
+        detail.update(chal)
+
+    def enroll_via_validate_2nd_step(self, passw, options=None):
+        """
+        This method is the optional second step of ENROLL_VIA_MULTICHALLENGE.
+        It is used in situations like the email token, sms token or push,
+        when enrollment via challenge response needs two steps.
+
+        The passw is entered during the first authentication step and it
+        contains the email address.
+
+        So we need to update the token with the email address and
+        we need to create a new challenge for the final authentication.
+
+        :param options:
+        :return:
+        """
+        # Get policy for email validation
+        validate_module = "privacyidea.lib.utils.emailvalidation"
+        if "g" in options:
+            g = options.get("g")
+            validate_modules = Match.user(g, scope=SCOPE.ENROLL,
+                                          action=ACTION.EMAILVALIDATION,
+                                          user_object=options.get("user") if "user" in options else None).action_values(
+                unique=True)
+            # check passw to be a valid email address
+            if len(validate_modules) == 1:
+                # We have a policy for email validation
+                validate_module = list(validate_modules)[0]
+        validate_email = get_email_validators().get(validate_module)
+        if validate_email(passw):
+            # TODO: If anything special happens, we could leave it as a dynamic email
+            self.del_tokeninfo("dynamic_email")
+            self.add_tokeninfo(self.EMAIL_ADDRESS_KEY, passw)
+            # Dynamically we remember that we need to do another challenge
+            self.currently_in_challenge = True
+        else:
+            self.token.delete()
+            raise ValidateError(_("The email address is not valid!"))

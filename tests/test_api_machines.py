@@ -6,7 +6,6 @@ import passlib
 
 from privacyidea.lib.user import User
 from .base import MyApiTestCase
-import json
 from privacyidea.lib.token import init_token, get_tokens, remove_token
 from privacyidea.lib.machine import attach_token, detach_token, ANY_MACHINE, NO_RESOLVER
 from privacyidea.lib.policy import (set_policy, delete_policy, ACTION, SCOPE)
@@ -27,9 +26,9 @@ SSHKEY = "ssh-rsa " \
          "afLE9AtAL4nnMPuubC87L0wJ88un9teza/N02KJMHy01Yz3iJKt3Ou9eV6kqO" \
          "ei3kvLs5dXmriTHp6g9whtnN6/Liv9SzZPJTs8YfThi34Wccrw== " \
          "NetKnights GmbH"
-SSHKEY_ecdsa = u"ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzd" \
-               u"HAyNTYAAABBBHGCdIk0pO1HFr/mF4oLb43ZRyQJ4K7ICLrAhAiQERVa0tUvyY5TE" \
-               u"zurWTqxSMx203rY77t6xnHLZBMPPpv8rk0= cornelius@puck"
+SSHKEY_ecdsa = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzd" \
+               "HAyNTYAAABBBHGCdIk0pO1HFr/mF4oLb43ZRyQJ4K7ICLrAhAiQERVa0tUvyY5TE" \
+               "zurWTqxSMx203rY77t6xnHLZBMPPpv8rk0= cornelius@puck"
 OTPKEY = "3132333435363738393031323334353637383930"
 
 
@@ -133,7 +132,7 @@ class APIMachinesTestCase(MyApiTestCase):
         # Get the token
         with self.app.test_request_context('/machine/token',
                                            method='GET',
-                                           data={"serial": serial},
+                                           query_string={"serial": serial},
                                            headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertTrue(res.status_code == 200, res)
@@ -236,6 +235,61 @@ class APIMachinesTestCase(MyApiTestCase):
         self.assertEqual(token_obj.token.machine_list[0].option_list[
                              0].mt_value, "/dev/sda1")
 
+    def test_04_set_options_by_mtid(self):
+        serial = "S1"
+        mtid = 0
+        # current number of attached applications.
+        token_obj = get_tokens(serial=serial)[0]
+        num_applications = len(token_obj.token.machine_list)
+        # create an ssh application
+        with self.app.test_request_context('/machine/token',
+                                           method='POST',
+                                           data={"hostname": "gandalf",
+                                                 "serial": serial,
+                                                 "application": "ssh",
+                                                 "user": "root",
+                                                 "service_id": "webserver"},
+                                           headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            self.assertTrue(result["value"] >= 1)
+            mtid = result.get("value")
+
+        with self.app.test_request_context('/machine/tokenoption',
+                                           method='POST',
+                                           data={"mtid": mtid,
+                                                 "application": "ssh",
+                                                 "service_id": "mailserver",
+                                                 "user": ""},
+                                           headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True, result)
+            self.assertEqual(1, result["value"]["added"], result)
+            self.assertEqual(1, result['value']['deleted'], result)
+
+        # check if the options were set.
+        token_obj = get_tokens(serial=serial)[0]
+        self.assertEqual(token_obj.token.machine_list[1].application, "ssh")
+        self.assertEqual(token_obj.token.machine_list[1].option_list[
+                             0].mt_value, "mailserver")
+        # Delete machinetoken
+        with self.app.test_request_context(
+                '/machine/token/S1/ssh/{}'.format(mtid),
+                method='DELETE',
+                headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            self.assertTrue(result["value"] >= 1)
+
+        # check if the the application is detached again
+        token_obj = get_tokens(serial=serial)[0]
+        self.assertEqual(num_applications, len(token_obj.token.machine_list))
 
     def test_05_list_machinetokens(self):
         with self.app.test_request_context('/machine/token?serial=S1',
@@ -287,6 +341,7 @@ class APIMachinesTestCase(MyApiTestCase):
         # Attach the token to the machine "gandalf" with the application SSH
         r = attach_token(hostname="gandalf", serial=self.serial2,
                          application="ssh", options={"user": "testuser"})
+        mtid = r.id
 
         self.assertEqual(r.machine_id, "192.168.0.1")
 
@@ -356,7 +411,96 @@ class APIMachinesTestCase(MyApiTestCase):
             sshkey = result["value"].get("ssh")[0].get("sshkey")
             self.assertTrue(sshkey.startswith("ssh-rsa"), sshkey)
 
-        detach_token(self.serial2, application="ssh", hostname="gandalf")
+        # Detach the machinetoken via ID - this is used in the UI
+        with self.app.test_request_context("/machine/token/{0!s}/ssh/{1!s}".format(self.serial2, mtid),
+                                           method='DELETE',
+                                           headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+
+        remove_token(self.serial2)
+
+    def test_10_auth_items_ssh_rsa_with_service_id(self):
+        # Attach with service_id and without IP, but still also support IP
+        # create an SSH token
+        token_obj = init_token({"serial": self.serial2, "type": "sshkey",
+                                "sshkey": SSHKEY})
+        self.assertEqual(token_obj.type, "sshkey")
+
+        # Attach the token to the machine "gandalf" with the application SSH
+        r = attach_token(serial=self.serial2,
+                         application="ssh", options={"user": "testuser", "service_id": "webserver"})
+
+        self.assertEqual(None, r.machine_id)
+        self.assertEqual("ssh", r.application)
+
+        # fetch the auth_items for application SSH on machine gandalf
+        with self.app.test_request_context(
+                '/machine/authitem/ssh?hostname=gandalf&service_id=webserver',
+                method='GET',
+                headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            sshkey = result["value"].get("ssh")[0].get("sshkey")
+            self.assertTrue(sshkey.startswith("ssh-rsa"), sshkey)
+
+        # fetch the auth_items for user testuser
+        with self.app.test_request_context(
+                '/machine/authitem/ssh?hostname=gandalf&service_id=webserver&user=testuser',
+                method='GET',
+                headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            sshkey = result["value"].get("ssh")[0].get("sshkey")
+            self.assertTrue(sshkey.startswith("ssh-rsa"), sshkey)
+
+        # fetch the auth_items for a user, who has no ssh keys
+        with self.app.test_request_context(
+                '/machine/authitem/ssh?hostname=gandalf&service_id=webserver&user=root',
+                method='GET',
+                headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            self.assertEqual({}, result.get("value"))
+
+        # fetch auth_items for testuser, but with mangle policy
+        # Remove everything that sounds like "SOMETHING\" in front of
+        # the username
+        set_policy(name="mangle1", scope=SCOPE.AUTH,
+                   action="{0!s}=user/.*\\\\(.*)/\\1/".format(ACTION.MANGLE))
+        with self.app.test_request_context(
+                '/machine/authitem/ssh?hostname=gandalf&service_id=webserver&user=DOMAIN\\testuser',
+                method='GET',
+                headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            sshkey = result["value"].get("ssh")[0].get("sshkey")
+            self.assertTrue(sshkey.startswith("ssh-rsa"), sshkey)
+        delete_policy("mangle1")
+
+        # Now that the policy is deleted, we will not get the auth_items
+        # anymore, since the username is not mangled.
+        with self.app.test_request_context(
+                '/machine/authitem/ssh?service_id=webserver&hostname=gandalft&user=DOMAIN\\testuser',
+                method='GET',
+                headers={'Authorization': self.at}):
+            res = self.app.full_dispatch_request()
+            self.assertTrue(res.status_code == 200, res)
+            result = res.json.get("result")
+            self.assertEqual(result["status"], True)
+            sshkeys = result["value"].get("ssh")
+            # No user DOMAIN\\testuser and no SSH keys
+            self.assertFalse(sshkeys)
+
+        detach_token(self.serial2, application="ssh")
         remove_token(self.serial2)
 
     def test_10_auth_items_ssh_ecdsa(self):
@@ -527,7 +671,7 @@ class APIMachinesTestCase(MyApiTestCase):
         # Get the token
         with self.app.test_request_context('/machine/token',
                                            method='GET',
-                                           data={"serial": serial},
+                                           query_string={"serial": serial},
                                            headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertTrue(res.status_code == 200, res)

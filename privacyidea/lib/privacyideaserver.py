@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2017-08-24 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Remote privacyIDEA server
 #
@@ -17,6 +15,7 @@
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
+from urllib.parse import quote
 from privacyidea.models import PrivacyIDEAServer as PrivacyIDEAServerDB
 import logging
 from privacyidea.lib.log import log_with
@@ -53,7 +52,8 @@ class PrivacyIDEAServer(object):
         """
         self.config = db_privacyideaserver_object
 
-    def validate_check(self, user, password, serial=None, realm=None, transaction_id=None, resolver=None):
+    def validate_check(self, user, password, serial=None, realm=None,
+                       transaction_id=None, resolver=None):
         """
         Perform an HTTP validate/check request to the remote privacyIDEA
         Server.
@@ -65,9 +65,9 @@ class PrivacyIDEAServer(object):
         :param transaction_id:  an optional transaction_id.
         :return: Tuple (HTTP response object, JSON response content)
         """
-        data = {"pass": password}
+        data = {"pass": quote(password)}
         if user:
-            data["user"] = user
+            data["user"] = quote(user)
         if serial:
             data["serial"] = serial
         if realm:
@@ -78,7 +78,8 @@ class PrivacyIDEAServer(object):
             data["resolver"] = resolver
         response = requests.post(self.config.url + "/validate/check",
                                  data=data,
-                                 verify=self.config.tls)
+                                 verify=self.config.tls,
+                                 timeout=60)
 
         return response
 
@@ -98,8 +99,9 @@ class PrivacyIDEAServer(object):
         :return: True or False. If any error occurs, an exception is raised.
         """
         response = requests.post(config.url + "/validate/check",
-                          data={"user": user, "pass": password},
-                          verify=config.tls
+                                 data={"user": quote(user), "pass": quote(password)},
+                                 verify=config.tls,
+                                 timeout=60
                           )
         log.debug("Sent request to privacyIDEA server. status code returned: "
                   "{0!s}".format(response.status_code))

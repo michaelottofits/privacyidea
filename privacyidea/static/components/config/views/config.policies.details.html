@@ -13,7 +13,8 @@
         Enable
     </button>
     <button class="btn btn-danger"
-            ng-click="delPolicy(existingPolicyname)">
+            aria-label="{{ 'Do you really want to delete this policy?' | translate }}"
+            ng-click="confirmDelete(delPolicy, existingPolicyname)">
         <span class="glyphicon glyphicon-trash"></span>
         <span translate>Delete</span>
     </button>
@@ -109,6 +110,19 @@
             </p>
         </div>
     </div>
+    <div class="form-group">
+        <label for="policydescription" class="col-sm-3 control-label"
+               translate>Description</label>
+
+        <div class="col-sm-6">
+            <input name="policydescription" class="form-control"
+                   id="policydescription"
+                   type="text"
+                   ng-model="params.description"
+                   placeholder="{{ 'A description for this policy' | translate }}"/>
+        </div>
+    </div>
+
 
     <div class="text-center"
          ng-show="checkRight('policywrite')">
@@ -184,6 +198,7 @@
                     </div>
                 </div>
             </div>
+
             <div class="form-group">
                 <label for="userresolver" class="col-sm-3
         control-label" translate>User-Resolver</label>
@@ -202,11 +217,12 @@
                            ng-model="params.check_all_resolvers"
                            id="all-resolvers">
                     <translate>
-                Check all possible resolvers of a user to match the resolver
-                in this policy.
+                        Check all possible resolvers of a user to match the resolver
+                        in this policy.
                     </translate>
                 </label>
             </div>
+
             <div class="form-group">
                 <label for="user" class="col-sm-3 control-label" translate>User
                 </label>
@@ -220,10 +236,22 @@
                            placeholder="userA, userB"/>
                 </div>
             </div>
+
+            <div class="form-group">
+                <label for="user_case_insensitive" class="col-sm-3 control-label" translate>
+                    Username case-insensitive.
+                </label>
+                <div class="col-sm-6">
+                    <input type="checkbox" name="user_case_insensitive"
+                           id="user_case_insensitive"
+                           ng-model="params.user_case_insensitive"/>
+                </div>
+            </div>
+
             <hr>
 
             <div class="form-group">
-                <label for="pinode" class="col-sm-3 control-label" translate>privacyIDEA Node</label>
+                <label for="pinode" class="col-sm-3 control-label" translate>privacyIDEA Nodes</label>
                 <div class="col-sm-3">
                     <div isteven-multi-select
                          id="pinode"
@@ -293,13 +321,13 @@
                     </label>
                     <label for="toggleAccordion">
                         <button class="btn btn-sm btn-success"
-                                ng-show="!isOpen"
-                                ng-click="isOpen = true">
+                                ng-show="groupsOpen < actionGroups.length"
+                                ng-click="openCloseAllGroups(true)">
                             <translate>Open all groups</translate>
                         </button>
                         <button class="btn btn-sm btn-success"
-                                ng-show="isOpen"
-                                ng-click="isOpen = false">
+                                ng-show="groupsOpen > 0"
+                                ng-click="openCloseAllGroups(false)">
                             <translate>Close all groups</translate>
                         </button>
                     </label>
@@ -310,11 +338,11 @@
                         <input type="text" ng-model="action_filter"
                                id="actionfilter"
                                placeholder="{{ 'filter action...'|translate }}"
-                               ng-change="isOpen = (action_filter.length > 0)"
+                               ng-change="openCloseAllGroups(action_filter.length > 0)"
                                class="form-control"
                                aria-describedby="filter-delete">
                         <span class="input-group-addon" id="filter-delete"
-                              ng-click="action_filter=''">
+                              ng-click="action_filter=''; openCloseAllGroups(false)">
                             <span class="glyphicon glyphicon-remove-circle"></span>
                         </span>
                     </div>
@@ -326,9 +354,16 @@
                         <uib-accordion close-others="false">
                             <div uib-accordion-group
                                  class="panel-default"
-                                 is-open="isOpen"
-                                 heading="{{ actionGroup || 'miscellaneous'}}"
-                                 ng-repeat="actionGroup in actionGroups">
+                                 ng-repeat="actionGroup in actionGroups"
+                                 is-open="groupIsOpen[actionGroup]">
+                                <uib-accordion-heading ng-click="groupIsOpen[actionGroup]=!groupIsOpen[actionGroup]">
+                                    <div>{{ ( actionGroup || 'miscellaneous') }}
+                                        <span class="pull-right glyphicon" aria-hidden="true"
+                                              ng-class="{'glyphicon-chevron-down': groupIsOpen[actionGroup],
+                                                     'glyphicon-chevron-right': !groupIsOpen[actionGroup]}">
+                                        </span>
+                                    </div>
+                                </uib-accordion-heading>
                                 <table class="table table-hover">
                                     <tr ng-repeat="action in actions"
                                         ng-show="checkOpenGroup(action, action_filter)"
@@ -347,16 +382,28 @@
                                             <label for="action_{{ action.name }}_str_vals"></label>
                                             <select class="form-control"
                                                     id="action_{{ action.name }}_str_vals"
-                                                    ng-show="action.allowedValues && action.type=='str'"
+                                                    ng-if="action.allowedValues && action.type=='str' && !action.multiple"
                                                     ng-model="actionValuesStr[action.name]"
                                                     ng-disabled="!actionCheckBox[action.name]"
                                                     name="action.name"
                                                     ng-options="select for select in action.allowedValues">
                                             </select>
+                                            <label for="action_{{ action.name }}_mult_str_vals"></label>
+                                            <div isteven-multi-select
+                                                 id="action_{{ action.name }}_mult_str_vals"
+                                                 ng-if="action.allowedValues && action.type=='str' && action.multiple"
+                                                 input-model="action.allowedValues"
+                                                 output-model="actionValuesStr[action.name]"
+                                                 button-label="name"
+                                                 item-label="name"
+                                                 tick-property="ticked"
+                                                 helper-elements=""
+                                                 is-disabled="!actionCheckBox[action.name]">
+                                            </div>
                                             <label for="action_{{ action.name }}_num_vals"></label>
                                             <select class="form-control"
                                                     id="action_{{ action.name }}_num_vals"
-                                                    ng-show="action.allowedValues && action.type=='int'"
+                                                    ng-if="action.allowedValues && action.type=='int'"
                                                     ng-model="actionValuesNum[action.name]"
                                                     ng-disabled="!actionCheckBox[action.name]"
                                                     name="action.name"
@@ -365,7 +412,7 @@
                                             <label for="action_{{ action.name }}_text_vals"></label>
                                             <select class="form-control"
                                                     id="action_{{ action.name }}_text_vals"
-                                                    ng-show="action.allowedValues && action.type=='text'"
+                                                    ng-if="action.allowedValues && action.type=='text'"
                                                     ng-model="actionValuesText[action.name]"
                                                     ng-disabled="!actionCheckBox[action.name]"
                                                     name="action.name"
@@ -376,7 +423,7 @@
                                                    id="action_{{ action.name }}_str"
                                                    placeholder="text..."
                                                    ng-model="actionValuesStr[action.name]"
-                                                   ng-show="action.type=='str' && !action.allowedValues"
+                                                   ng-if="action.type=='str' && !action.allowedValues"
                                                    ng-disabled="!actionCheckBox[action.name]"
                                                    ng-required="actionCheckBox[action.name] && action.type=='str'"
                                                    class="form-control"/>
@@ -384,14 +431,14 @@
                                             <input type="number"
                                                    id="action_{{ action.name }}_num"
                                                    ng-model="actionValuesNum[action.name]"
-                                                   ng-show="action.type=='int' && !action.allowedValues"
+                                                   ng-if="action.type=='int' && !action.allowedValues"
                                                    ng-disabled="!actionCheckBox[action.name]"
                                                    ng-required="actionCheckBox[action.name] && action.type=='int'"
                                                    class="form-control"/>
                                             <label for="action_{{ action.name }}_text"></label>
                                             <textarea id="action_{{ action.name }}_text"
                                                       ng-model="actionValuesText[action.name]"
-                                                      ng-show="action.type=='text' && !action.allowedValues"
+                                                      ng-if="action.type=='text' && !action.allowedValues"
                                                       ng-disabled="!actionCheckBox[action.name]"
                                                       ng-required="actionCheckBox[action.name] && action.type=='text'"
                                                       class="form-control"></textarea>
@@ -400,13 +447,13 @@
                                             <!-- This is the description of the policy action
                                              -->
                                             <p class="help help-block"
-                                            ng-bind-html="action.desc | highlight: action_filter">
+                                               ng-bind-html="action.desc | highlight: action_filter">
                                             </p>
                                         </td>
                                         <td>
                                             <a target="_external" href="{{ 'https://privacyidea.readthedocs.io/en/v'+
                                             privacyideaVersionNumber+'/policies/' + selectedScope[0].name + '.html#' +
-                                            action.name.split('_').join('-').toLowerCase()}}">
+                                            action.name.split('_').join('-').toLowerCase() }}">
                                                 <span class="glyphicon glyphicon-info-sign"></span>
                                             </a>
                                         </td>

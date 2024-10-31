@@ -1,9 +1,16 @@
 <div class="row">
-    <div class="col-sm-12">
+    <div class="col-sm-12" ng-show="otp_rows">
         <uib-accordion close-others="oneAtATime">
             <div uib-accordion-group
                  class="panel-default"
-                 heading="{{ 'The OTP values'|translate }}">
+                 is-open="isOpen">
+                <uib-accordion-heading ng-click="isOpen=!isOpen">
+                    <div >{{ 'The OTP values'|translate }}
+                        <span class="pull-right glyphicon" aria-hidden="true"
+                           ng-class="{'glyphicon-chevron-down': isOpen, 'glyphicon-chevron-right': !isOpen}">
+                        </span>
+                    </div>
+                </uib-accordion-heading>
                 <div id="paperOtpTable">
                     <div ng-include="instanceUrl+'/'+piCustomization+
                     '/views/includes/token.enrolled.tan.top.html'"></div>
@@ -12,15 +19,15 @@
                                   tantoken">
                             <thead>
                             <tr>
-                                <th translate>#</th>
+                                <th>#</th>
                                 <th>OTP</th>
-                                <th translate>#</th>
+                                <th>#</th>
                                 <th>OTP</th>
-                                <th translate>#</th>
+                                <th>#</th>
                                 <th>OTP</th>
-                                <th translate>#</th>
+                                <th>#</th>
                                 <th>OTP</th>
-                                <th translate>#</th>
+                                <th>#</th>
                                 <th>OTP</th>
                             </tr>
                             </thead>
@@ -49,10 +56,10 @@
                 </div>
             </div>
         </uib-accordion>
+        <button class="btn-default btn"
+                ng-click="printOtp()">
+            <span class="glyphicon glyphicon-print"></span>
+            <span translate>Print the OTP list</span>
+        </button>
     </div>
 </div>
-<button class="btn-default btn"
-    ng-click="printOtp()">
-    <span class="glyphicon glyphicon-print"></span>
-    <span translate>Print the OTP list</span>
-</button>

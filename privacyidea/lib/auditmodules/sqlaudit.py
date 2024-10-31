@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2016-04-08 Cornelius Kölbel <cornelius@privacyidea.org>
 #             Avoid consecutive if statements
 #
@@ -49,11 +47,10 @@ from privacyidea.lib.lifecycle import register_finalizer
 from privacyidea.lib.utils import truncate_comma_list, is_true
 from sqlalchemy import MetaData, cast, String
 from sqlalchemy import asc, desc, and_, or_
-from sqlalchemy.sql import expression
+from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.ext.compiler import compiles
 import datetime
 import traceback
-from six import string_types
 from privacyidea.models import audit_column_length as column_length
 from privacyidea.models import Audit as LogEntry
 from sqlalchemy import create_engine
@@ -65,10 +62,11 @@ metadata = MetaData()
 
 
 # Define function to convert SQL DateTime objects to an ISO-format string
-# By using <https://docs.sqlalchemy.org/en/13/core/compiler.html> we can
+# By using <https://docs.sqlalchemy.org/en/14/core/compiler.html> we can
 # differentiate between different dialects.
-class to_isodate(expression.FunctionElement):
+class to_isodate(FunctionElement):
     name = 'to_isodate'
+    inherit_cache = True
 
 
 @compiles(to_isodate, 'oracle')
@@ -132,10 +130,13 @@ class Audit(AuditBase):
         self.sign_data = not self.config.get("PI_AUDIT_NO_SIGN")
         self.sign_object = None
         self.verify_old_sig = self.config.get('PI_CHECK_OLD_SIGNATURES')
+        # Disable the costly checking of private RSA keys when loading them.
+        self.check_private_key = not self.config.get("PI_AUDIT_NO_PRIVATE_KEY_CHECK", False)
         if self.sign_data:
             self.read_keys(self.config.get("PI_AUDIT_KEY_PUBLIC"),
                            self.config.get("PI_AUDIT_KEY_PRIVATE"))
-            self.sign_object = Sign(self.private, self.public)
+            self.sign_object = Sign(self.private, self.public,
+                                    check_private_key=self.check_private_key)
         # Read column_length from the config file
         config_column_length = self.config.get("PI_AUDIT_SQL_COLUMN_LENGTH", {})
         # fill the missing parts with the default from the models
@@ -196,7 +197,7 @@ class Audit(AuditBase):
         for column, l in self.custom_column_length.items():
             if column in self.audit_data:
                 data = self.audit_data[column]
-                if isinstance(data, string_types):
+                if isinstance(data, str):
                     if column == "policies":
                         # The policies column is shortened per comma entry
                         data = truncate_comma_list(data, l)
@@ -277,7 +278,9 @@ class Audit(AuditBase):
         It should hash the data and do a hash chain and sign the data
         """
         try:
-            self.audit_data["policies"] = ",".join(self.audit_data.get("policies", []))
+            for entry, value in self.audit_data.items():
+                if isinstance(value, list):
+                    self.audit_data[entry] = ",".join(value)
             if self.config.get("PI_AUDIT_SQL_TRUNCATE"):
                 self._truncate_data()
             if "tokentype" in self.audit_data:
@@ -291,8 +294,11 @@ class Audit(AuditBase):
                 duration = None
             le = LogEntry(action=self.audit_data.get("action"),
                           success=int(self.audit_data.get("success", 0)),
+                          authentication=self.audit_data.get("authentication"),
                           serial=self.audit_data.get("serial"),
                           token_type=self.audit_data.get("token_type"),
+                          container_serial=self.audit_data.get("container_serial"),
+                          container_type=self.audit_data.get("container_type"),
                           user=self.audit_data.get("user"),
                           realm=self.audit_data.get("realm"),
                           resolver=self.audit_data.get("resolver"),
@@ -301,11 +307,14 @@ class Audit(AuditBase):
                           info=self.audit_data.get("info"),
                           privacyidea_server=self.audit_data.get("privacyidea_server"),
                           client=self.audit_data.get("client", ""),
+                          user_agent=self.audit_data.get("user_agent"),
+                          user_agent_version=self.audit_data.get("user_agent_version"),
                           loglevel=self.audit_data.get("log_level"),
                           clearance_level=self.audit_data.get("clearance_level"),
                           policies=self.audit_data.get("policies"),
                           startdate=self.audit_data.get("startdate"),
-                          duration=duration
+                          duration=duration,
+                          thread_id=self.audit_data.get("thread_id")
                           )
             self.session.add(le)
             self.session.commit()
@@ -333,7 +342,7 @@ class Audit(AuditBase):
         """
         Check if the audit log contains the entries before and after
         the given id.
-        
+
         TODO: We can not check at the moment if the first or the last entries
               were deleted. If we want to do this, we need to store some signed
               meta information:
@@ -367,7 +376,7 @@ class Audit(AuditBase):
         """
         This function creates a string from the logentry so
         that this string can be signed.
-        
+
         Note: Not all elements of the LogEntry are used to generate the
         string (the Signature is not!), otherwise we could have used pickle
 
@@ -375,8 +384,9 @@ class Audit(AuditBase):
         :type le: LogEntry
         :rtype str
         """
-        s = u"id=%s,date=%s,action=%s,succ=%s,serial=%s,t=%s,u=%s,r=%s,adm=%s," \
-            u"ad=%s,i=%s,ps=%s,c=%s,l=%s,cl=%s" % (le.id,
+        # TODO: Add thread_id. We really should add a versioning to identify which audit data is signed.
+        s = "id=%s,date=%s,action=%s,succ=%s,serial=%s,t=%s,u=%s,r=%s,adm=%s," \
+            "ad=%s,i=%s,ps=%s,c=%s,l=%s,cl=%s" % (le.id,
                                                    le.date,
                                                    le.action,
                                                    le.success,
@@ -396,6 +406,10 @@ class Audit(AuditBase):
             s += ",{0!s}".format(le.startdate)
         if le.duration:
             s += ",{0!s}".format(le.duration)
+        if le.container_serial:
+            s += f",c_serial={le.container_serial}"
+        if le.container_type:
+            s += f",ct={le.container_type}"
         return s
 
     @staticmethod
@@ -420,7 +434,10 @@ class Audit(AuditBase):
                     'client': LogEntry.client,
                     'log_level': LogEntry.loglevel,
                     'policies': LogEntry.policies,
-                    'clearance_level': LogEntry.clearance_level}
+                    'clearance_level': LogEntry.clearance_level,
+                    'thread_id': LogEntry.thread_id,
+                    'container_serial': LogEntry.container_serial,
+                    'container_type': LogEntry.container_type}
         return sortname.get(key)
 
     def csv_generator(self, param=None, user=None, timelimit=None):
@@ -440,7 +457,7 @@ class Audit(AuditBase):
 
         for le in logentries:
             audit_dict = self.audit_entry_to_dict(le)
-            yield u",".join([u"'{0!s}'".format(x) for x in audit_dict.values()]) + u"\n"
+            yield ",".join(["'{0!s}'".format(x) for x in audit_dict.values()]) + "\n"
 
     def get_count(self, search_dict, timedelta=None, success=None):
         # create filter condition
@@ -571,9 +588,12 @@ class Audit(AuditBase):
         audit_dict['sig_check'] = "OK" if sig else "FAIL"
         audit_dict['missing_line'] = "OK" if is_not_missing else "FAIL"
         audit_dict['action'] = audit_entry.action
+        audit_dict['authentication'] = audit_entry.authentication
         audit_dict['success'] = audit_entry.success
         audit_dict['serial'] = audit_entry.serial
         audit_dict['token_type'] = audit_entry.token_type
+        audit_dict['container_serial'] = audit_entry.container_serial
+        audit_dict['container_type'] = audit_entry.container_type
         audit_dict['user'] = audit_entry.user
         audit_dict['realm'] = audit_entry.realm
         audit_dict['resolver'] = audit_entry.resolver
@@ -583,8 +603,11 @@ class Audit(AuditBase):
         audit_dict['privacyidea_server'] = audit_entry.privacyidea_server
         audit_dict['policies'] = audit_entry.policies
         audit_dict['client'] = audit_entry.client
+        audit_dict['user_agent'] = audit_entry.user_agent
+        audit_dict['user_agent_version'] = audit_entry.user_agent_version
         audit_dict['log_level'] = audit_entry.loglevel
         audit_dict['clearance_level'] = audit_entry.clearance_level
         audit_dict['startdate'] = audit_entry.startdate.isoformat() if audit_entry.startdate else None
         audit_dict['duration'] = audit_entry.duration.total_seconds() if audit_entry.duration else None
+        audit_dict['thread_id'] = audit_entry.thread_id
         return audit_dict

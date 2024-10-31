@@ -1,9 +1,9 @@
+.. index:: Event Handler, events
+
 .. _eventhandler:
 
 Event Handler
 =============
-
-.. index:: Event Handler, events
 
 Added in version 2.12.
 
@@ -152,7 +152,7 @@ This can be '>100', '<99', or '=100', to trigger the action, if the tokeninfo fi
 
 This is the ``failcount`` of the token. It is increased on failed authentication
 attempts. If it reaches ``max_failcount`` increasing will stop and the token is locked.
-See :ref:`failcounter`.
+See :term:`failcount`.
 
 The condition can be set to '>9', '=10', or '<5' and it will trigger the action accordingly.
 
@@ -246,6 +246,14 @@ This condition checks the result of an event.
 
 E.g. the result of the event *validate_check* can be a failed authentication.
 This can be the trigger to notify either the token owner or the administrator.
+
+**result_authentication**
+
+This checks the entry `result->authentication` in the response.
+Possible values are "ACCEPT", "REJECT", "DECLINED" and "CHALLENGE".
+It is an enhancement to `result_value`.
+If `result_value` is *true*, the `result_authentication` will be "ACCEPT".
+If `result_value` is *false*, the `result_authentication` can be "CHALLENGE", "REJECT" or "DELINCED".
 
 **rollout_state**
 
@@ -344,8 +352,8 @@ The action is only triggered, if the user in the event has the given number
 of tokens assigned.
 
 This can be used to e.g. automatically enroll a token for the user if the
-user has no tokens left (``token_number == 0``) of to notify the administrator if
-the user has to many tokens assigned.
+user has no tokens left or to notify the administrator if
+the user has a certain amount of tokens assigned.
 
 **counter**
 
@@ -359,6 +367,51 @@ value. Valid compares are::
 "myCounter" being any event counter set with the :ref:`counterhandler`.
 
 .. note:: A non-existing counter value will compare as 0 (zero).
+
+**challenge_session**
+
+The *challenge_session* condition can compare the value of the session attribute of
+a challenge against a regular expression. Usual values of the session are:
+
+*enrollment* during a multi challenge enrollment process and
+
+*challenge_declined* if the challenge of a PUSH token was declined by the user.
+
+This way, the administrator can check for declined PUSH authentications and take
+according actions to implement PUSH fatigue mitigations like
+notifying the helpdesk (see :ref:`usernotification`),
+disabling the token or increasing a counter in the tokeninfo (see :ref:`tokenhandler`).
+
+**challenge_expired**
+
+This is a boolean check if the challenge has expired. Each challenge has an expiration
+date. If this exceeded this condition evaluates to *True*.
+
+**token_is_in_container**
+
+The action is only triggered, if the token is or is not in a container.
+
+**container_state**
+
+The action is only triggered if the container is in all specified states. The container can have other states
+besides the given value.
+
+**container_exact_state**
+
+The action is only triggered if the container is exactly in all specified states. No additional states are allowed.
+
+**container_has_owner**
+
+The action is only triggered if the container is or is not assigned to a user.
+
+**container_type**
+
+The action is only triggered if the container is of the given type.
+
+**container_has_token**
+
+The action is only triggered if the container has or has not at least one token.
+
 
 Managing Events
 ---------------
@@ -387,3 +440,5 @@ Available Handler Modules
    responsemangler
    logginghandler
    customuserattributehandler
+   webhookhandler
+   containerhandler

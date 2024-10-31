@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA
 #  Aug 12, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -87,11 +85,14 @@ def _digi2daplug(normal_otp):
     for i in hex_otp:
         daplug_otp += REVERSE_MAPPING.get(i)
     return daplug_otp
-         
+
+
 class DaplugTokenClass(HotpTokenClass):
     """
     daplug token class implementation
     """
+    # If the token is enrollable via multichallenge
+    is_multichallenge_enrollable = False
 
     @staticmethod
     def get_class_type():
@@ -151,7 +152,7 @@ class DaplugTokenClass(HotpTokenClass):
         :type aToken:  orm object
         """
         HotpTokenClass.__init__(self, a_token)
-        self.set_type(u"daplug")
+        self.set_type("daplug")
         self.hKeyRequired = True
         return
 
@@ -244,7 +245,6 @@ class DaplugTokenClass(HotpTokenClass):
         return res
 
     def split_pin_pass(self, passw, user=None, options=None):
-        res = 0
         try:
             otplen = int(self.token.otplen)
         except ValueError:  # pragma: no cover
@@ -261,4 +261,4 @@ class DaplugTokenClass(HotpTokenClass):
             pin = passw[otplen:]
             otpval = passw[0:otplen]
 
-        return res, pin, otpval
+        return len(passw) >= otplen, pin, otpval

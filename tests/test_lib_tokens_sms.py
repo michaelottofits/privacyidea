@@ -16,7 +16,6 @@ from privacyidea.lib.policy import set_policy, SCOPE, PolicyClass
 from privacyidea.lib import _
 import datetime
 import mock
-import six
 import responses
 from testfixtures import log_capture
 
@@ -61,8 +60,7 @@ class SMSTokenTestCase(MyTestCase):
                                "fileName": PWFILE})
         self.assertTrue(rid > 0, rid)
 
-        (added, failed) = set_realm(self.realm1,
-                                    [self.resolvername1])
+        (added, failed) = set_realm(self.realm1, [{'name': self.resolvername1}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 1)
 
@@ -189,8 +187,7 @@ class SMSTokenTestCase(MyTestCase):
                         token.token.so_pin)
         self.assertTrue(len(token.token.user_pin) == 32,
                         token.token.user_pin)
-        self.assertTrue(len(token.token.key_enc) == 192,
-                        token.token.key_enc)
+        self.assertEqual(len(token.token.key_enc), 96, token.token.key_enc)
         self.assertTrue(token.get_otplen() == 8)
         self.assertTrue(token.token.count == 1000,
                         token.token.count)
@@ -203,6 +200,16 @@ class SMSTokenTestCase(MyTestCase):
 
         token.set_sync_window(53)
         self.assertTrue(token.get_sync_window() == 53)
+
+    def test_05_get_set_realms(self):
+        set_realm(self.realm2)
+        db_token = Token.query.filter_by(serial=self.serial1).first()
+        token = SmsTokenClass(db_token)
+        realms = token.get_realms()
+        self.assertTrue(len(realms) == 1, realms)
+        token.set_realms([self.realm1, self.realm2])
+        realms = token.get_realms()
+        self.assertTrue(len(realms) == 2, realms)
 
     def test_06_set_pin(self):
         db_token = Token.query.filter_by(serial=self.serial1).first()
@@ -219,27 +226,11 @@ class SMSTokenTestCase(MyTestCase):
         db_token = Token.query.filter_by(serial=self.serial1).first()
         token = SmsTokenClass(db_token)
         token.enable(False)
-        self.assertTrue(token.token.active is False)
+        self.assertFalse(token.token.active)
         token.enable()
         self.assertTrue(token.token.active)
-
-    def test_05_get_set_realms(self):
-        set_realm(self.realm2)
-        db_token = Token.query.filter_by(serial=self.serial1).first()
-        token = SmsTokenClass(db_token)
-        realms = token.get_realms()
-        self.assertTrue(len(realms) == 1, realms)
-        token.set_realms([self.realm1, self.realm2])
-        realms = token.get_realms()
-        self.assertTrue(len(realms) == 2, realms)
-
-    def test_99_delete_token(self):
-        db_token = Token.query.filter_by(serial=self.serial1).first()
-        token = SmsTokenClass(db_token)
-        token.delete_token()
-
-        db_token = Token.query.filter_by(serial=self.serial1).first()
-        self.assertTrue(db_token is None, db_token)
+        # we need to safe the token explicitly here to persist it to the db
+        token.save()
 
     def test_08_info(self):
         db_token = Token.query.filter_by(serial=self.serial1).first()
@@ -378,8 +369,7 @@ class SMSTokenTestCase(MyTestCase):
 
         # check for the challenges response
         r = token.check_challenge_response(passw=otp,
-                                           options={"transaction_id":
-                                                        transactionid})
+                                           options={"transaction_id": transactionid})
         self.assertTrue(r, r)
 
     @responses.activate
@@ -400,8 +390,7 @@ class SMSTokenTestCase(MyTestCase):
 
         # check for the challenges response
         r = token.check_challenge_response(passw=otp,
-                                           options={"transaction_id":
-                                                        transactionid})
+                                           options={"transaction_id": transactionid})
         self.assertTrue(r, r)
 
     @responses.activate
@@ -459,7 +448,7 @@ class SMSTokenTestCase(MyTestCase):
             smstext = token._get_sms_text(options)
             self.assertEqual(pol_text.strip("'"), smstext)
             r, message = token._send_sms(smstext, options)
-            self.assertRegexpMatches(message, result_text)
+            self.assertRegex(message, result_text)
 
         # Test AUTOSMS
         p = set_policy(name="autosms",
@@ -489,12 +478,8 @@ class SMSTokenTestCase(MyTestCase):
             c = token.create_challenge(transactionid)
             self.assertFalse(c[0], c)
             self.assertTrue(c[1].startswith("The PIN was correct, but"), c[1])
-            if six.PY2:
-                expected = "Failed to load SMSProvider: ImportError" \
-                           "(u'privacyidea.lib.smsprovider.HttpSMSProvider has no attribute HttpSMSProviderWRONG',)"
-            else:
-                expected = "Failed to load SMSProvider: ImportError" \
-                           "('privacyidea.lib.smsprovider.HttpSMSProvider has no attribute HttpSMSProviderWRONG'"
+            expected = "Failed to load SMSProvider: ImportError" \
+                       "('privacyidea.lib.smsprovider.HttpSMSProvider has no attribute HttpSMSProviderWRONG'"
             mock_log.mock_called()
             mocked_str = mock_log
             self.assertTrue(mocked_str.startswith(expected), mocked_str)
@@ -507,17 +492,22 @@ class SMSTokenTestCase(MyTestCase):
             c = token.create_challenge(transactionid)
             self.assertFalse(c[0], c)
             self.assertTrue(c[1].startswith("The PIN was correct, but"), c[1])
-            if six.PY2:
-                expected = "Failed to load sms.providerConfig: ValueError('No JSON object could be decoded',)"
-            else:
-                expected = "Failed to load sms.providerConfig: " \
-                           "JSONDecodeError('Expecting value: line 1 column 1 (char 0)')"
+            expected = "Failed to load sms.providerConfig: " \
+                       "JSONDecodeError('Expecting value: line 1 column 1 (char 0)')"
             mock_log.mock_called()
             mocked_str = mock_log
             self.assertTrue(mocked_str.startswith(expected), mocked_str)
         capture.clear()
 
-        #test with the parameter exception=1
+        # test with the parameter exception=1
         self.assertRaises(Exception, token.create_challenge, transactionid, {"exception": "1"})
 
         remove_token(token.get_serial())
+
+    def test_99_delete_token(self):
+        db_token = Token.query.filter_by(serial=self.serial1).first()
+        token = SmsTokenClass(db_token)
+        token.delete_token()
+
+        db_token = Token.query.filter_by(serial=self.serial1).first()
+        self.assertTrue(db_token is None, db_token)

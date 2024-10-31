@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 This file tests the web UI for creating certificate requests
 
@@ -120,7 +118,6 @@ class WebUICertificateTestCase(MyTestCase):
 
         # GET-Request will fail, Method not allowed
         with self.app.test_request_context('/certificate/enroll',
-                                           method='GET',
-                                           data={}):
+                                           method='GET'):
             res = self.app.full_dispatch_request()
             self.assertTrue(res.status_code == 405, res)

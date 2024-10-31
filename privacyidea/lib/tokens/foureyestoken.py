@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  License:  AGPLv3
 #  contact:  http://www.privacyidea.org
 #
@@ -98,7 +96,7 @@ class FourEyesTokenClass(TokenClass):
         :type db_token: database token object
         """
         TokenClass.__init__(self, db_token)
-        self.set_type(u"4eyes")
+        self.set_type("4eyes")
 
     @staticmethod
     def get_class_type():

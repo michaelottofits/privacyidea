@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 from .base import MyApiTestCase
 import binascii
 import struct
@@ -16,7 +14,6 @@ from privacyidea.lib.tokens.u2ftoken import U2FACTION
 from privacyidea.models import Challenge
 from privacyidea.lib.utils import hexlify_and_unicode, to_bytes
 from privacyidea.lib.error import ERROR
-from privacyidea.lib import _
 
 
 PWFILE = "tests/testdata/passwords"
@@ -199,8 +196,7 @@ class APIU2fTestCase(MyApiTestCase):
         # Issue challenge
         with self.app.test_request_context('/validate/check',
                                            method='POST',
-                                           data={"user":
-                                                    "cornelius@"+self.realm1,
+                                           data={"user": "cornelius@"+self.realm1,
                                                  "pass": "u2f"}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
@@ -212,7 +208,7 @@ class APIU2fTestCase(MyApiTestCase):
             self.assertEqual("u2f", multi_challenge[0].get("client_mode"))
             self.assertEqual(len(transaction_id), len('01350277175811850842'))
             self.assertEqual(detail.get("message"), detail.get("message"),
-                            _("Please confirm with your U2F token ({0!s})").format("Yubico U2F EE Serial 13831167861"))
+                             "Please confirm with your U2F token ({0!s})".format("Yubico U2F EE Serial 13831167861"))
             attributes = detail.get("attributes")
             u2f_sign_request = attributes.get("u2fSignRequest")
             self.assertTrue("appId" in u2f_sign_request)
@@ -424,8 +420,8 @@ class APIU2fTestCase(MyApiTestCase):
             self.assertEqual(result.get("status"), False)
             self.assertEqual(result.get("error").get("code"), ERROR.POLICY)
             self.assertEqual(result.get("error").get("message"),
-                             u'The U2F device is not allowed to authenticate '
-                             u'due to policy restriction.')
+                             'The U2F device is not allowed to authenticate '
+                             'due to policy restriction.')
 
         delete_policy("u2f01")
         remove_token(serial)
@@ -471,8 +467,8 @@ class APIU2fTestCase(MyApiTestCase):
             result = res.json.get("result")
             self.assertEqual(result.get("status"), False)
             self.assertEqual(result.get("error").get("message"),
-                             u'The U2F device is not allowed to be registered '
-                             u'due to policy restriction.')
+                             'The U2F device is not allowed to be registered '
+                             'due to policy restriction.')
 
         delete_policy("u2f01")
         remove_token(serial)

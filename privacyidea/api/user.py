@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # http://www.privacyidea.org
 # (c) cornelius kölbel, privacyidea.org
 #
@@ -64,14 +62,14 @@ def get_users():
                   from this realm
     :param resolver: a distinct resolvername
     :param <searchexpr>: a search expression, that depends on the ResolverClass
-    
+
     :return: json result with "result": true and the userlist in "value".
 
     **Example request**:
 
     .. sourcecode:: http
 
-       GET /user?realm=realm1 HTTP/1.1
+       GET /user/?realm=realm1 HTTP/1.1
        Host: example.com
        Accept: application/json
 
@@ -110,7 +108,7 @@ def get_users():
 
     g.audit_object.log({'success': True,
                         'info': "realm: {0!s}".format(realm)})
-    
+
     return send_result(users)
 
 
@@ -143,7 +141,7 @@ def set_user_attribute():
     attrtype = getParam(request.all_data, "type", optional=True)
     r = request.User.set_attribute(attrkey, attrvalue, attrtype)
     g.audit_object.log({"success": True,
-                        "info": u"{0!s}".format(attrkey)})
+                        "info": "{0!s}".format(attrkey)})
     return send_result(r)
 
 
@@ -170,7 +168,7 @@ def get_user_attribute():
     if attrkey:
         r = r.get(attrkey)
     g.audit_object.log({"success": True,
-                        "info": u"{0!s}".format(attrkey)})
+                        "info": "{0!s}".format(attrkey)})
     return send_result(r)
 
 
@@ -214,7 +212,7 @@ def delete_user_attribute(attrkey, username, realm=None):
     user = User(username, realm)
     r = user.delete_attribute(attrkey)
     g.audit_object.log({"success": True,
-                        "info": u"{0!s}".format(attrkey)})
+                        "info": "{0!s}".format(attrkey)})
     return send_result(r)
 
 
@@ -242,7 +240,7 @@ def delete_user(resolvername=None, username=None):
     user_obj = request.User
     res = user_obj.delete()
     g.audit_object.log({"success": res,
-                        "info": u"{0!s}".format(user_obj)})
+                        "info": "{0!s}".format(user_obj)})
     return send_result(res)
 
 
@@ -286,7 +284,7 @@ def create_user_api():
         del attributes["password"]
     r = create_user(resolvername, attributes, password=password)
     g.audit_object.log({"success": True,
-                        "info": u"{0!s}: {1!s}/{2!s}".format(r, username,
+                        "info": "{0!s}: {1!s}/{2!s}".format(r, username,
                                                             resolvername)})
     return send_result(r)
 
@@ -340,7 +338,7 @@ def update_user():
         del attributes["password"]
     r = user_obj.update_user_info(attributes, password=password)
     g.audit_object.log({"success": True,
-                        "info": u"{0!s}: {1!s}/{2!s}".format(r, username, resolvername)})
+                        "info": "{0!s}: {1!s}/{2!s}".format(r, username, resolvername)})
     return send_result(r)
 
 

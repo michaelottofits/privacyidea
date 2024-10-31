@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2019-09-06 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Initial writup
 #
@@ -168,7 +166,7 @@ class RequestManglerEventHandler(BaseEventHandler):
                             try:
                                 request.all_data[parameter] = value.format(*m.groups())
                             except IndexError:
-                                log.warning(u"The number of found tags ({0!r}) "
-                                            u"do not match the required number ({1!r}).".format(m.groups(), value))
+                                log.warning("The number of found tags ({0!r}) "
+                                            "do not match the required number ({1!r}).".format(m.groups(), value))
 
         return ret

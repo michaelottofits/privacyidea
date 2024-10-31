@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #  privacyIDEA is a fork of LinOTP
 #
 #  2015-11-03   Cornelius Kölbel <cornelius@privacyidea.org>
@@ -45,9 +44,9 @@ or to webservices!
 This code is tested in tests/test_lib_user.py
 '''
 
+import hashlib
 import logging
 import traceback
-import six
 
 from .error import UserError
 from ..api.lib.utils import (getParam,
@@ -60,19 +59,19 @@ from .realm import (get_realms, realm_is_defined,
                     get_default_realm,
                     get_realm, get_realm_id)
 from .config import get_from_config, SYSCONF
+from .framework import get_app_config_value
 from .usercache import (user_cache, cache_username, user_init, delete_user_cache)
 from privacyidea.models import CustomUserAttribute, db
 
 log = logging.getLogger(__name__)
 
 
-@six.python_2_unicode_compatible
 class User(object):
     """
     The user has the attributes
       login, realm and resolver.
     Usually a user can be found via "login@realm".
-    
+
     A user object with an empty login and realm should not exist,
     whereas a user object could have an empty resolver.
     """
@@ -97,10 +96,15 @@ class User(object):
         self.resolver = resolver or ""
         self.uid = uid
         self.rtype = None
+        # Hash of already checked passwords and their result. If a user has multiple token, it is not necessary to check
+        # the same password multiple times. However, we can not differentiate between PIN+OTP and just PIN, so this dict
+        # will have an entry for PIN+OTP (likely to fail) and then the OTP cut off to just PIN. In case the PIN was
+        # given in the request, the dict will have only one entry.
+        self._checked_passwords = {}
         if not self.login and not self.resolver and uid is not None:
             raise UserError("Can not create a user object from a uid without a resolver!")
         # Enrich user object with information from the userstore or from the
-        # usercache
+        # user cache
         if login or uid is not None:
             self._get_user_from_userstore()
             # Just store the resolver type
@@ -155,16 +159,16 @@ class User(object):
                      "{0!s} != {1!s}.".format(self, other))
             return False
         if self.uid and other.uid:
-            log.debug(u"Comparing based on uid: {0!s} vs {1!s}".format(self.uid, other.uid))
+            log.debug("Comparing based on uid: {0!s} vs {1!s}".format(self.uid, other.uid))
             return self.uid == other.uid
-        log.debug(u"Comparing based on login: {0!s} vs {1!s}".format(self.login, other.login))
+        log.debug("Comparing based on login: {0!s} vs {1!s}".format(self.login, other.login))
         return self.login == other.login
 
     def __ne__(self, other):
         """
         Compare two user objects and return true, if they are not equal
 
-        :param other: The other User objkect
+        :param other: The other User object
         :return: True or False
         """
         return not self.__eq__(other)
@@ -173,17 +177,17 @@ class User(object):
         return hash((type(self), self.login, self.resolver, self.realm))
 
     def __str__(self):
-        ret = u"<empty user>"
+        ret = "<empty user>"
         if not self.is_empty():
             # Realm and resolver should always be ASCII
-            conf = u''
+            conf = ''
             if self.resolver:
-                conf = u'.{0!s}'.format(self.resolver)
-            ret = u'<{0!s}{1!s}@{2!s}>'.format(self.login, conf, self.realm)
+                conf = '.{0!s}'.format(self.resolver)
+            ret = '<{0!s}{1!s}@{2!s}>'.format(self.login, conf, self.realm)
         return ret
 
     def __repr__(self):
-        ret = (u"User(login={0!r}, realm={1!r}, resolver={2!r})".format(
+        ret = ("User(login={0!r}, realm={1!r}, resolver={2!r})".format(
             self.login, self.realm, self.resolver))
         return ret
 
@@ -191,29 +195,35 @@ class User(object):
         return not self.is_empty()
 
     __nonzero__ = __bool__
-    
+
     @log_with(log)
-    def get_ordererd_resolvers(self):
+    def get_ordered_resolvers(self):
         """
-        returns a list of resolvernames ordered by priority.
+        returns a list of resolver names ordered by priority.
         The resolver with the lowest priority is the first.
         If resolvers have the same priority, they are ordered alphabetically.
 
-        :return: list or resolvernames
+        :return: list of resolver names
+        :rtype: list
         """
         resolver_tuples = []
         realm_config = get_realms(self.realm)
-        resolvers_in_realm = realm_config.get(self.realm, {})\
-                                         .get("resolver", {})
+        resolvers_in_realm = realm_config.get(self.realm, {}) \
+            .get("resolver", [])
         for resolver in resolvers_in_realm:
             # append a tuple
             resolver_tuples.append((resolver.get("name"),
-                             resolver.get("priority") or 1000))
+                                    resolver.get("priority") or 1000,
+                                    resolver.get("node")))
 
         # sort the resolvers by the 2nd entry in the tuple, the priority
-        resolvers = sorted(resolver_tuples, key=lambda resolver: resolver[1])
-        resolvers = [r[0] for r in resolvers]
-        return resolvers
+        sorted_resolvers = sorted(resolver_tuples, key=lambda res: res[1])
+        # if the resolver contains a node setting, we only add it if it is on the correct node
+        local_node_uuid = get_app_config_value("PI_NODE_UUID")
+        resolvers = [r[0] for r in sorted_resolvers if not r[2] or r[2] == local_node_uuid]
+        # remove duplicate resolver names but keeping the order
+        seen = set()
+        return [x for x in resolvers if not (x in seen or seen.add(x))]
 
     def _get_resolvers(self, all_resolvers=False):
         """
@@ -233,9 +243,9 @@ class User(object):
         """
         if self.resolver:
             return [self.resolver]
-        
+
         resolvers = []
-        for resolvername in self.get_ordererd_resolvers():
+        for resolvername in self.get_ordered_resolvers():
             # test, if the user is contained in this resolver
             if self._locate_user_in_resolver(resolvername):
                 break
@@ -305,11 +315,13 @@ class User(object):
             # An empty user has no info
             return {}
         (uid, _rtype, _resolver) = self.get_user_identifiers()
+        if uid is None:
+            return {}
         y = get_resolver_object(self.resolver)
-        userInfo = y.getUserInfo(uid)
+        user_info = y.getUserInfo(uid)
         # Now add the custom attributes, this is used e.g. in ADDUSERINRESPONSE
-        userInfo.update(self.attributes)
-        return userInfo
+        user_info.update(self.attributes)
+        return user_info
 
     @log_with(log)
     def set_attribute(self, attrkey, attrvalue, attrtype=None):
@@ -354,14 +366,14 @@ class User(object):
     def get_user_phone(self, phone_type='phone', index=None):
         """
         Returns the phone number or a list of phone numbers of a user.
-    
+
         :param phone_type: The type of the phone, i.e. either mobile or
                            phone (land line)
         :type phone_type: string
         :param index: The index of the selected phone number of list of the phones of the user.
             If the index is given, this phone number as string is returned.
             If the index is omitted, all phone numbers are returned.
-    
+
         :returns: list with phone numbers of this user object
         """
         userinfo = self.info
@@ -389,7 +401,7 @@ class User(object):
         But if the user object has no realm but only a resolver,
         than all realms, containing this resolver are returned.
         This function is used for the policy module
-        
+
         :return: realms of the user
         :rtype: list
         """
@@ -414,64 +426,78 @@ class User(object):
                         log.debug("added realm %r to Realms due to "
                                   "resolver %r" % (key, self.resolver))
         return Realms
-    
+
     @log_with(log, log_entry=False)
     def check_password(self, password):
         """
         The password of the user is checked against the user source
-        
+
         :param password: The clear text password
         :return: the username of the authenticated user.
                  If unsuccessful, returns None
         :rtype: string/None
         """
         success = None
+
+        # The password hash is used to avoid multiple password checks at the
+        # resolver. It is not persisted in any way and only stored in memory for
+        # the duration of the request.
+        password_hash = hashlib.sha3_512(password.encode("utf-8")).hexdigest()
+
         try:
-            log.info("User %r from realm %r tries to "
-                     "authenticate" % (self.login, self.realm))
+            log.info(f"User {self.login} from realm {self.realm} tries to authenticate")
+            # If the password was already checked, return the known result
+            if password_hash in self._checked_passwords.keys():
+                if self._checked_passwords[password_hash]:
+                    success = f"{self.login}@{self.realm}"
+                    log.debug(f"Successfully authenticated user {self} from request cache.")
+                else:
+                    log.info(f"User {self} failed to authenticate from request cache.")
+                return success
             res = self._get_resolvers()
-            # Now we know, the resolvers of this user and we can verify the
-            # password
+            # Now we know, the resolvers of this user, and we can verify the password
             if len(res) == 1:
                 y = get_resolver_object(self.resolver)
                 uid, _rtype, _rname = self.get_user_identifiers()
                 if y.checkPass(uid, password):
-                    success = u"{0!s}@{1!s}".format(self.login, self.realm)
-                    log.debug("Successfully authenticated user {0!r}.".format(self))
+                    success = f"{self.login}@{self.realm}"
+                    log.debug(f"Successfully authenticated user {self}.")
+                    self._checked_passwords[password_hash] = True
                 else:
-                    log.info("user {0!r} failed to authenticate.".format(self))
+                    log.info(f"User {self} failed to authenticate.")
+                    self._checked_passwords[password_hash] = False
 
             elif not res:
-                log.error("The user {0!r} exists in NO resolver.".format(self))
+                log.error(f"The user {self!r} exists in NO resolver.")
         except UserError as e:  # pragma: no cover
-            log.error("Error while trying to verify the username: {0!r}".format(e))
+            log.error(f"Error while trying to verify the username: {e}")
         except Exception as e:  # pragma: no cover
-            log.error("Error checking password within module {0!r}".format(e))
-            log.debug("{0!s}".format(traceback.format_exc()))
-    
+            log.error(f"Error checking password within module {e}")
+            log.debug(f"{traceback.format_exc()}")
+
         return success
-    
+
     @log_with(log)
     def get_search_fields(self):
         """
         Return the valid search fields of a user.
         The search fields are defined in the UserIdResolver class.
-        
+
         :return: searchFields with name (key) and type (value)
         :rtype: dict
         """
         searchFields = {}
-    
+
         for reso in self._get_resolvers():
             # try to load the UserIdResolver Class
             try:
                 y = get_resolver_object(reso)
                 sf = y.getSearchFields()
                 searchFields[reso] = sf
-    
+
             except Exception as e:  # pragma: no cover
                 log.warning("module {0!r}: {1!r}".format(reso, e))
-    
+
         return searchFields
 
     # If passwords should not be logged, we hide it from the log entry
@@ -600,7 +626,7 @@ def split_user(username):
     and the username and an empty realm will be returned.
 
     We can also split realm\\user to (user, realm)
-    
+
     :param username: the username to split
     :type username: string
     :return: username and realm
@@ -624,17 +650,19 @@ def split_user(username):
     return user, realm
 
 
-@log_with(log)
+@log_with(log, hide_args_keywords={0: ["pass", "password"]})
 def get_user_from_param(param, optionalOrRequired=optional):
     """
-    Find the parameters user, realm and resolver and
+    Find the parameter user, realm and resolver and
     create a user object from these parameters.
-    
+
     An exception is raised, if a user in a realm is found in more
-    than one resolvers.
-    
+    than one resolver.
+
     :param param: The dictionary of request parameters
     :type param: dict
+    :param optionalOrRequired: whether the user is required
+    :type optionalOrRequired: bool
     :return: User as found in the parameters
     :rtype: User object
     """
@@ -703,18 +731,21 @@ def get_user_list(param=None, user=None, custom_attributes=False):
     if user is not None:
         user_resolver = user.resolver
         user_realm = user.realm
-        
+
     # Append all possible resolvers
     if param_resolver:
         resolvers.append(param_resolver)
     if user_resolver:
         resolvers.append(user_resolver)
+
+    local_node_uuid = get_app_config_value("PI_NODE_UUID")
     for pu_realm in [param_realm, user_realm]:
         if pu_realm:
             realm_config = get_realm(pu_realm)
             for r in realm_config.get("resolver", {}):
                 if r.get("name"):
-                    resolvers.append(r.get("name"))
+                    if not r.get("node") or r["node"] == local_node_uuid:
+                        resolvers.append(r.get("name"))
 
     if not (param_resolver or user_resolver or param_realm or user_realm):
         # if no realm or resolver was specified, we search the resolvers
@@ -722,7 +753,8 @@ def get_user_list(param=None, user=None, custom_attributes=False):
         all_realms = get_realms()
         for _name, res_list in all_realms.items():
             for resolver_entry in res_list.get("resolver"):
-                resolvers.append(resolver_entry.get("name"))
+                if not resolver_entry.get("node") or resolver_entry["node"] == local_node_uuid:
+                    resolvers.append(resolver_entry.get("name"))
 
     for resolver_name in set(resolvers):
         try:
@@ -744,12 +776,12 @@ def get_user_list(param=None, user=None, custom_attributes=False):
             users.extend(ulist)
 
         except KeyError as exx:  # pragma: no cover
-            log.error("{0!r}".format((exx)))
+            log.error("{0!r}".format(exx))
             log.debug("{0!s}".format(traceback.format_exc()))
             raise exx
 
         except Exception as exx:  # pragma: no cover
-            log.error("{0!r}".format((exx)))
+            log.error("{0!r}".format(exx))
             log.debug("{0!s}".format(traceback.format_exc()))
             continue
 
@@ -761,7 +793,7 @@ def get_user_list(param=None, user=None, custom_attributes=False):
 def get_username(userid, resolvername):
     """
     Determine the username for a given id and a resolvername.
-    
+
     :param userid: The id of the user in a resolver
     :type userid: string
     :param resolvername: The name of the resolver
@@ -786,7 +818,7 @@ def log_used_user(user, other_text=""):
     :param other_text: Some additional text
     :return: str
     """
-    return u"logged in as {0}. {1}".format(user.used_login, other_text) if user.used_login != user.login else other_text
+    return "logged in as {0}. {1}".format(user.used_login, other_text) if user.used_login != user.login else other_text
 
 
 def get_attributes(uid, resolver, realm_id):

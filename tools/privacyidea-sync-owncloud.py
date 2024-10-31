@@ -1,10 +1,7 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-#
 #  2020-04-28 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Read tables oc_accounts and oc_users from owncloud
 #
-from __future__ import print_function
 __doc__ = """You can use this script to read the tables oc_accounts and
 oc_users from owncloud and fill a local user table in privacyIDEA.
 
@@ -14,17 +11,12 @@ Run this script in a cron job. It will read the users from ownCloud and
 * remove deleted users
 """
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import select
 from sqlalchemy.schema import ForeignKey
-from sqlalchemy import (Table, MetaData, Column, Integer, Unicode, Boolean,
-                        UnicodeText)
+from sqlalchemy import (Table, MetaData, Column, Integer, Unicode)
 import sys
 import json
 import getopt
-import binascii
-import os
-import re
 
 
 EXAMPLE_CONFIG_FILE = """{
@@ -206,7 +198,7 @@ def main():
         elif o in ("-c", "--config"):
             config_file = a
         else:
-            print(u"Unknown parameter: {0!s}".format(o))
+            print("Unknown parameter: {0!s}".format(o))
             sys.exit(3)
 
     if config_file:

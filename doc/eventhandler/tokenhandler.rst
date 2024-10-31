@@ -46,11 +46,13 @@ enable
 The token which was identified in the request will be enabled
 if all conditions are matched.
 
+.. _event_token_enroll:
+
 enroll
 ......
 
 If all conditions are matched a new token will be enrolled. This new token
-can be assigned to a user, which was identified in the request.
+can be assigned to a user and added to a container, which were both identified in the request.
 
 The administrator can specify the **tokentype** and the **realms** of the new
 token. By default the generation of the token will use the parameter ``genkey``, to
@@ -166,6 +168,15 @@ and ``{ua_string}`` for information on the user agent and ``{username}`` and
 .. note:: You can use this to set the ``timeWindow`` of a TOTP token for
    :ref:`faq_initial_synchronization`.
 
+increase tokeninfo
+...................
+
+Using the action ``increase tokeninfo``, you can increase the value of a tokeninfo key.
+The tokeninfo is interpreted as an integer value.
+You can use a positive or a negative value as an *increment*. An increment like "-7" will
+decrease the current tokeninfo value by 7.
+If the tokeninfo does not exist, it will be created with the increment value.
+
 set failcounter
 ...............
 
@@ -173,7 +184,7 @@ Using the action ``set failcounter`` you can reset the fail counter by
 setting it to 0 or also "block" the token by setting the fail counter to what
 ever value the "max_fail" is, e.g. 10. Only integer values are allowed.
 
-See :ref:`failcounter`.
+See :term:`failcount`.
 
 change failcounter
 ..................
@@ -194,7 +205,7 @@ Using the action ``set max failcount`` you can set the maximum failcounter of a
 token to the specific value.
 Only integer values are allowed.
 
-See :ref:`failcounter`.
+See :term:`failcount`.
 
 set random pin
 ..............
@@ -204,6 +215,18 @@ Sets a random PIN for the handled token. The PIN is then added to the response i
 Please take care, that probably the PIN needs to be removed from the response
 using the *response mangler handler* after
 handling it with the notification handler.
+
+add tokengroup
+..............
+
+The token is assigned to the given tokengroup.
+
+.. Note:: A token can be assigned to several different tokengroups at the same time.
+
+remove tokengroup
+.................
+
+The token is unassigned from the given tokengroup.
 
 Code
 ~~~~

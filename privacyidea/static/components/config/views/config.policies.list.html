@@ -1,5 +1,5 @@
 <div class="table-responsive">
-    <table class="table table-bordered table-responsive table-striped">
+    <table class="table table-bordered table-responsive table-striped table-capitalize-header">
         <thead>
         <tr>
             <th>
@@ -20,7 +20,6 @@
                 <button class="btn btn-default unsorted" pi-sort-by="action" translate>Action</button>
                 <pi-filter ng-model="filter.action_desc" ng-change="$apply()"></pi-filter>
             </th>
-            <th translate>Action</th>
             <th translate>Realm</th>
             <th translate>User</th>
             <th translate>Resolver</th>
@@ -74,7 +73,8 @@
             <td>
                 <button class="btn btn-danger"
                         ng-show="checkRight('policydelete')"
-                        ng-click="delPolicy(policy.name)">
+                        aria-label='{{ "Do you really want to delete this policy?" |  translate }}'
+                        ng-click="confirmDelete(delPolicy, policy.name)">
                         <span class="glyphicon glyphicon-trash"></span>
                     <span translate>Delete</span>
                 </button>

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2016-09-23 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Save and delete subscriptions
 #
@@ -29,23 +27,22 @@ import logging
 import datetime
 import random
 from .log import log_with
+from .utils import get_plugin_info_from_useragent
 from ..models import Subscription
 from privacyidea.lib.error import SubscriptionError
 from privacyidea.lib.token import get_tokens
 from privacyidea.lib.crypto import Sign
+from privacyidea.lib import _, lazy_gettext
 import functools
 from privacyidea.lib.framework import get_app_config_value
 import os
 import traceback
 from sqlalchemy import func
-from six import PY2, string_types
 
 
-if not PY2:
-    long = int
-
+EXPIRE_MESSAGE = lazy_gettext("My subscription has expired.")
 SUBSCRIPTION_DATE_FORMAT = "%Y-%m-%d"
-SIGN_FORMAT = u"""{application}
+SIGN_FORMAT = """{application}
 {for_name}
 {for_address}
 {for_email}
@@ -68,8 +65,11 @@ SIGN_FORMAT = u"""{application}
 
 APPLICATIONS = {"demo_application": 0,
                 "owncloud": 50,
+                "privacyidea-nextcloud": 50,
                 "privacyidea-ldap-proxy": 50,
                 "privacyidea-cp": 50,
+                "privacyidea-pam": 10000,
+                "privacyidea-shibboleth": 10000,
                 "privacyidea-adfs": 50,
                 "privacyidea-keycloak": 10000,
                 "simplesamlphp": 10000,
@@ -104,7 +104,7 @@ def subscription_status(component="privacyidea", tokentype=None):
 
     :return: subscription state
     """
-    token_count = get_tokens(assigned=True, active=True, count=True, tokentype=tokentype)
+    token_count = get_tokens(assigned=True, active=True, count=True, tokentype=tokentype, all_nodes=True)
     if token_count <= APPLICATIONS.get(component, 50):
         return 0
 
@@ -115,7 +115,7 @@ def subscription_status(component="privacyidea", tokentype=None):
     try:
         check_subscription(component)
     except SubscriptionError as exx:
-        log.warning(u"{0}".format(exx))
+        log.warning("{0}".format(exx))
         return 2
 
     return 3
@@ -132,10 +132,10 @@ def save_subscription(subscription):
     :type subscription: dict
     :return: True in case of success
     """
-    if isinstance(subscription.get("date_from"), string_types):
+    if isinstance(subscription.get("date_from"), str):
         subscription["date_from"] = datetime.datetime.strptime(
             subscription.get("date_from"), SUBSCRIPTION_DATE_FORMAT)
-    if isinstance(subscription.get("date_till"), string_types):
+    if isinstance(subscription.get("date_till"), str):
         subscription["date_till"] = datetime.datetime.strptime(
             subscription.get("date_till"), SUBSCRIPTION_DATE_FORMAT)
 
@@ -205,8 +205,8 @@ def delete_subscription(application):
 
 def raise_exception_probability(subscription=None):
     """
-    Depending on the subscription this will return True, so that an exception
-    can be raised
+    Depending on the subscription expiration data this will return True,
+    so that an exception can be raised
 
     :param subscription: Subscription dictionary
     :return: Bool
@@ -214,7 +214,8 @@ def raise_exception_probability(subscription=None):
     if not subscription:
         # No subscription at all. We are in a kind of demo mode and return
         # True with a 50% chance
-        return random.randrange(0, 2)
+        # This is only for probability, so we use the less secure but faster random module
+        return random.randrange(0, 2)  # nosec B311
 
     expire = subscription.get("date_till")
     delta = datetime.datetime.now() - expire
@@ -224,9 +225,31 @@ def raise_exception_probability(subscription=None):
         # After 74 days we get 80%
         # After 94 days we get 100%
         p = 0.2 + ((delta.days-14.0)/30.0) * 0.3
-        return random.random() < p
+        # This is only for probability, so we use the less secure but faster random module
+        return random.random() < p  # nosec B311
 
     return False
+
+
+def subscription_exceeded_probability(active_tokens, allowed_tokens):
+    """
+    Depending on the subscription token numbers, this will return True,
+    so that an exception can be raised.
+
+    Returns true if a Subscription Exception is to be raised.
+
+    :param active_tokens: The number of the active tokens
+    :param allowed_tokens: The number of the allowed tokens
+    :return:
+    """
+    # old, hard behaviour
+    # return active_tokens > allowed_tokens
+    if active_tokens > allowed_tokens:
+        # This is only for probability, so we use the less secure but faster random module
+        prob_check = random.randrange(active_tokens + 1)  # nosec B311
+        return prob_check > allowed_tokens
+    else:
+        return False
 
 
 def check_subscription(application, max_free_subscriptions=None):
@@ -246,7 +269,7 @@ def check_subscription(application, max_free_subscriptions=None):
         token_users = get_users_with_active_tokens()
         free_subscriptions = max_free_subscriptions or APPLICATIONS.get(application.lower())
         if len(subscriptions) == 0:
-            if token_users > free_subscriptions:
+            if subscription_exceeded_probability(token_users, free_subscriptions):
                 raise SubscriptionError(description="No subscription for your client.",
                                         application=application)
         else:
@@ -261,7 +284,8 @@ def check_subscription(application, max_free_subscriptions=None):
             else:
                 # subscription is still valid, so check the signature.
                 check_signature(subscription)
-                if token_users > subscription.get("num_tokens"):
+                allowed_tokennums = subscription.get("num_tokens")
+                if subscription_exceeded_probability(token_users, allowed_tokennums):
                     # subscription is exceeded
                     raise SubscriptionError(description="Too many users "
                                                         "with assigned tokens. "
@@ -283,7 +307,7 @@ def check_signature(subscription):
     enckey = get_app_config_value("PI_ENCFILE", "/etc/privacyidea/enckey")
     dirname = os.path.dirname(enckey)
     # In dirname we are searching for <vendor>.pem
-    filename = u"{0!s}/{1!s}.pem".format(dirname, vendor)
+    filename = "{0!s}/{1!s}.pem".format(dirname, vendor)
 
     try:
         # remove the minutes 00:00:00
@@ -329,12 +353,10 @@ class CheckSubscription(object):
         @functools.wraps(func)
         def check_subscription_wrapper(*args, **kwds):
             request = self.request
-            ua = request.user_agent
-            ua_str = "{0!s}".format(ua) or "unknown"
-            application = ua_str.split()[0]
+            ua_str = str(request.user_agent.string)
+            plugin_name = get_plugin_info_from_useragent(ua_str)[0]
             # check and raise if fails
-            #check_subscription("privacyidea")
-            check_subscription(application)
+            check_subscription(plugin_name)
             f_result = func(*args, **kwds)
             return f_result
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 2016-01-20 Cornelius Kölbel <cornelius@privacyidea.org>
            Support STARTTLS mock
@@ -22,23 +21,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-from __future__ import (
-    absolute_import, print_function, division, unicode_literals
-)
-
-import six
+import inspect
 import smtplib
 
-try:
-    from inspect import formatargspec, getfullargspec as getargspec
-except ImportError:
-    from inspect import formatargspec, getargspec
-
-try:
-    from collections import Sequence, Sized
-except ImportError:
-    from collections.abc import Sequence, Sized
+from collections.abc import Sequence, Sized
 
 from collections import namedtuple
 from functools import update_wrapper
@@ -57,17 +43,13 @@ def wrapper%(signature)s:
 def get_wrapped(func, wrapper_template, evaldict):
     # Preserve the argspec for the wrapped function so that testing
     # tools such as pytest can continue to use their fixture injection.
-    args = getargspec(func)
-    values = args.args[-len(args.defaults):] if args.defaults else None
 
-    signature = formatargspec(*args)
+    signature = inspect.signature(func, follow_wrapped=False)
     is_bound_method = hasattr(func, '__self__')
-    if is_bound_method:
-        args.args = args.args[1:]     # Omit 'self'
-    callargs = formatargspec(*args, formatvalue=lambda v: '=' + v)
+    callargs = str(signature)
 
-    ctx = {'signature': signature, 'funcargs': callargs}
-    six.exec_(wrapper_template % ctx, evaldict)
+    ctx = {'signature': str(signature), 'funcargs': callargs}
+    exec(wrapper_template % ctx, evaldict, evaldict)
 
     wrapper = evaldict['wrapper']
 

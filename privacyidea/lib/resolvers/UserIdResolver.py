@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # 2015-06-05   Cornelius Kölbel <cornelius@privacyidea.org>
 #              Add interface to edit and add users
 # Dec 01, 2014 Cornelius Kölbel <cornelius@privacyidea.org>
@@ -135,6 +133,7 @@ class UserIdResolver(object):
     def getUsername(self, userid):
         """
         Returns the username/loginname for a given userid
+
         :param userid: The userid in this resolver
         :type userid: string
         :return: username
@@ -146,6 +145,7 @@ class UserIdResolver(object):
         """
         This function returns all user information for a given user object
         identified by UserID.
+
         :param userid: ID of the user in the resolver
         :type userid: int or string
         :return:  dictionary, if no object is found, the dictionary is empty

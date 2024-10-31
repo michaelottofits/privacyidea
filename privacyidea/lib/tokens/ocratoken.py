@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  http://www.privacyidea.org
 #  2018-04-16 Friedrich Weber <friedrich.weber@netknights.it>
 #             Fix validation of challenge responses
@@ -126,7 +124,7 @@ class OcraTokenClass(TokenClass):
         :type db_token: DB object
         """
         TokenClass.__init__(self, db_token)
-        self.set_type(u"ocra")
+        self.set_type("ocra")
         self.hKeyRequired = False
 
     def update(self, param):
@@ -225,8 +223,7 @@ class OcraTokenClass(TokenClass):
             elif options.get("hashchallenge", "").lower() == "sha512":
                 challenge = hexlify_and_unicode(hashlib.sha512(to_bytes(challenge)).digest())
             elif options.get("hashchallenge"):
-                challenge = hexlify_and_unicode(hashlib.sha1(to_bytes(challenge)).digest())
-
+                challenge = hexlify_and_unicode(hashlib.sha1(to_bytes(challenge)).digest())  # nosec B324 # ocra definition
 
         # Create the challenge in the database
         db_challenge = Challenge(self.token.serial,

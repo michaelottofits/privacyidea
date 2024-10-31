@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2021-02-04 Timo Sturm <timo.sturm@netknights.it>
 #             Fix import of yubikeys from yubico
 #  2020-11-11 Timo Sturm <timo.sturm@netknights.it>
@@ -46,11 +44,13 @@
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-'''This file is part of the privacyidea service
+"""
+This file is part of the privacyidea service
 It is used for importing SafeNet (former Aladdin)
 XML files, that hold the OTP secrets for eToken PASS.
-'''
-import hmac, hashlib
+"""
+import hmac
+import hashlib
 import defusedxml.ElementTree as etree
 import re
 import binascii
@@ -58,6 +58,7 @@ import base64
 import html
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from privacyidea.lib.error import TokenImportException
 from privacyidea.lib.utils import (modhex_decode, modhex_encode,
                                    hexlify_and_unicode, to_unicode, to_utf8,
                                    b64encode_and_unicode)
@@ -84,20 +85,12 @@ def _create_static_password(key_hex):
     msg_hex = "000000000000ffffffffffffffff0f2e"
     msg_bin = binascii.unhexlify(msg_hex)
     cipher = Cipher(algorithms.AES(binascii.unhexlify(key_hex)),
-                    modes.ECB(), default_backend())
+                    modes.ECB(), default_backend())  # nosec B305 # part of Yubikey specification
     encryptor = cipher.encryptor()
     password_bin = encryptor.update(msg_bin) + encryptor.finalize()
     password = modhex_encode(password_bin)
 
     return password
-
-
-class ImportException(Exception):
-    def __init__(self, description):
-        self.description = description
-
-    def __str__(self):
-        return ('{0!s}'.format(self.description))
 
 
 def getTagName(elem):
@@ -357,10 +350,10 @@ def parseSafeNetXML(xml):
         elem_tokencontainer = etree.fromstring(xml)
     except etree.ParseError as e:
         log.debug(traceback.format_exc())
-        raise ImportException('Could not parse XML data: {0!s}'.format(e))
+        raise TokenImportException('Could not parse XML data: {0!s}'.format(e))
 
     if getTagName(elem_tokencontainer) != "Tokens":
-        raise ImportException("No toplevel element Tokens")
+        raise TokenImportException("No toplevel element Tokens")
 
     for elem_token in list(elem_tokencontainer):
         SERIAL = None
@@ -437,13 +430,13 @@ def derive_key(xml, password):
     :return: The derived key, hexlified
     """
     if not password:
-        raise ImportException("The XML KeyContainer specifies a derived "
+        raise TokenImportException("The XML KeyContainer specifies a derived "
                               "encryption key, but no password given!")
 
     keymeth = xml.keycontainer.encryptionkey.derivedkey.keyderivationmethod
     derivation_algo = keymeth["algorithm"].split("#")[-1]
     if derivation_algo.lower() != "pbkdf2":
-        raise ImportException("We only support PBKDF2 as Key derivation "
+        raise TokenImportException("We only support PBKDF2 as Key derivation "
                               "function!")
     salt = keymeth.find("salt").text.strip()
     keylength = keymeth.find("keylength").text.strip()
@@ -488,7 +481,7 @@ def parsePSKCdata(xml_data,
     xml = strip_prefix_from_soup(BeautifulSoup(xml_data, "lxml"))
 
     if not xml.keycontainer:
-        raise ImportException("No KeyContainer found in PSKC data. Could not "
+        raise TokenImportException("No KeyContainer found in PSKC data. Could not "
                               "import any tokens.")
     if xml.keycontainer.encryptionkey and \
             xml.keycontainer.encryptionkey.derivedkey:
@@ -549,7 +542,7 @@ def parsePSKCdata(xml_data,
                 encryptionmethod = key.data.secret.encryptedvalue.encryptionmethod
                 enc_algorithm = encryptionmethod["algorithm"].split("#")[-1]
                 if enc_algorithm.lower() != "aes128-cbc":
-                    raise ImportException("We only import PSKC files with "
+                    raise TokenImportException("We only import PSKC files with "
                                           "AES128-CBC.")
                 enc_data = key.data.secret.encryptedvalue.ciphervalue.text
                 enc_data = enc_data.strip()
@@ -587,7 +580,7 @@ def parsePSKCdata(xml_data,
         except Exception as exx:
             log.error("Failed to import tokendata: {0!s}".format(exx))
             log.debug(traceback.format_exc())
-            raise ImportException("Failed to import tokendata. Wrong "
+            raise TokenImportException("Failed to import tokendata. Wrong "
                                   "encryption key? %s" % exx)
 
         if token["type"] in ["hotp", "totp"] and key.data.counter:
@@ -625,9 +618,7 @@ class GPGImport(object):
             self.gpg = gnupg.GPG(gnupghome=self.gnupg_home)
             self.private_keys = self.gpg.list_keys(True)
         else:
-            log.warning(u"Directory {} does not exists!".format(self.gnupg_home))
-
-
+            log.warning("Directory {} does not exists!".format(self.gnupg_home))
 
     def get_publickeys(self):
         """
@@ -642,7 +633,7 @@ class GPGImport(object):
             keys = self.gpg.list_keys(secret=True)
         else:
             keys = []
-            log.warning(u"Directory {} does not exists!".format(self.gnupg_home))
+            log.warning("Directory {} does not exists!".format(self.gnupg_home))
 
         for key in keys:
             ascii_armored_public_key = self.gpg.export_keys(key.get("keyid"))
@@ -666,7 +657,7 @@ class GPGImport(object):
         decrypted = self.gpg.decrypt(message=input_data)
 
         if not decrypted.ok:
-            log.error(u"Decrpytion failed: {0!s}. {1!s}".format(
+            log.error("Decrpytion failed: {0!s}. {1!s}".format(
                 decrypted.status, decrypted.stderr))
             raise Exception(decrypted.stderr)
 
@@ -791,7 +782,7 @@ def export_pskc(tokenobj_list, psk=None):
             soup.macmethod.insert_after(kp2)
             number_of_exported_tokens += 1
         except Exception as e:
-            log.warning(u"Failed to export the token {0!s}: {1!s}".format(serial, e))
+            log.warning("Failed to export the token {0!s}: {1!s}".format(serial, e))
             tb = traceback.format_exc()
             log.debug(tb)
 

@@ -7,7 +7,7 @@ CA Connectors
 
 You can use privacyIDEA to enroll certificates and assign certificates to users.
 
-You can define connections to Certifacte Authorities, that are used when
+You can define connections to Certificate Authorities, that are used when
 enrolling certificates.
 
 .. _fig_caconnector:
@@ -38,7 +38,7 @@ Local CA Connector
 
 .. index:: openssl
 
-The local CA connector calls a local openssl configuration.
+The local CA connector calls a local openSSL configuration.
 
 Starting with privacyIDEA version 2.12 an example *openssl.cnf* is provided in
 */etc/privacyidea/CA/openssl.cnf*.
@@ -72,7 +72,7 @@ Easy Setup
 
 Starting with privacyIDEA version 2.18 it gets easier to setup local CAs.
 
-You can use the :ref:`pimanage` tool to setup a new CA like this:
+You can use the :ref:`pimanage` tool to setup a new CA like this::
 
    pi-manage ca create myCA
 
@@ -94,14 +94,14 @@ revoked and a CRL is created.
    basis. You can use openssl to do so or the pi-manage command.
 
 Starting with version 2.18 the pi-manage command has an additional
-sub-command ``ca``:
+sub-command ``ca``::
 
     pi-manage ca list
 
-lists all configured *CA connectors*. You can use the *-v* switch to get more
+which lists all configured *CA connectors*. You can use the ``-v`` switch to get more
 information.
 
-You can create a new CRL with the command:
+You can create a new CRL with the command::
 
     pi-manage ca create_crl <CA name>
 
@@ -118,7 +118,7 @@ Templates
 
 The *local CA* supports a kind of certificate templates. These "templates"
 are predefined combinations of *extensions* and *validity days*, as they are
-passed to openssl via the parameters ``-extensions`` and ``-days``.
+passed to openSSL via the parameters ``-extensions`` and ``-days``.
 
 This way the administrator can define certificate templates with certain
 X.509 extensions like keyUsage, extendedKeyUsage, CDPs or AIAs and
@@ -128,7 +128,7 @@ The extensions are defined in YAML file and the location of this file is
 added to the CA connector definition.
 
 The file can look like this, defining three templates "user", "webserver" and
-"template3":
+"template3"::
 
     user:
         days: 365
@@ -141,3 +141,96 @@ The file can look like this, defining three templates "user", "webserver" and
         extensions: "user"
 
 
+.. _msca_caconnector:
+
+Microsoft CA Connector
+~~~~~~~~~~~~~~~~~~~~~~
+
+This CA connector communicates to the privacyIDEA MS CA worker, that is installed
+on a Windows server in the Windows Domain. Through this worker, privacyIDEA can connect
+potentially to all Microsoft CAs in the Windows Domain.
+
+The Microsoft CA Connector has the following options.
+
+**Hostname**
+
+The hostname (FQDN) or IP address where the privacyIDEA MS CA worker is running.
+
+.. note:: If you configure `Use SSL`, you need to provide the correct hostname as it is
+   contained in the server certificate.
+
+**Port**
+
+The port on which the worker listens.
+
+**Connect via Proxy**
+
+Whether the worker is situated behind a HTTP proxy.
+
+**Domain CA**
+
+The worker will provide a list of available CAs in the domain. This is the
+actual CA to which privacyIDEA shall communicate. After providing the initial
+connection information `hostname` and `Port`, privacyIDEA can fetch the available
+CAs in the Windows Domain. The CA is identified by the hostname where the Microsoft CA is
+running and the name of the CA like `<hostname>\\<name of CA>`.
+
+**Use SSL**
+
+This is a boolean parameter. If it is checked, then privacyIDEA will communicate to
+the CA worker via TLS. Depending on the worker configuration it will also be required,
+to provide a client certificate for authentication.
+
+.. note:: In productive use SSL should always be activated and a client certificate must
+   be used for authentication.
+
+**CA certificate**
+
+This is the location of the file, that contains the CA certificate, that issued the
+CA worker server certificate. This file is located on the privacyIDEA server in PEM format.
+
+**Client certificate**
+
+This is the file location of the certificate that privacyIDEA uses to authenticate against the CA worker.
+It is in PEM format.
+
+.. note:: The subject of this certificate must match the name of the privacyIDEA server as
+   seen by the CA worker. It is a good idea to request the client certificate from the
+   CA on the domain where the CA worker is actually running at.
+
+**Client private key**
+
+This is the location of the file containing the private key that belongs to the `Client certificate`.
+It is in PEM format and can either be password protected (encrypted) or not.
+
+The key can be provided in PKCS1 or PKCS8 format.
+
+.. note:: The PCKCS1 format will start with ``-----BEGIN RSA PRIVATE KEY-----``, the PKCS8 format
+   will start with ``-----BEGIN PRIVATE KEY-----``.
+
+To convert between PKCS1 and PKCS8 format you can use::
+
+    openssl pkcs8 -in private-p1.pem -topk8 -out private-p8.pem -nocrypt
+    openssl pkcs8 -in private-p1.pem -topk8 -out private-p8-encrypted.pem
+
+    openssl rsa -in private-p8.pem -out private-p1.pem
+
+**Password of client certificate**
+
+This is the password of the encrypted client private key.
+
+.. note:: We strongly recommend to protect the file with a password. As encrypted key files
+   we only support PKCS8!
+
+
+
+Basic setup from the command line
+.................................
+
+Of course the MS CA Connector can be configured in the privacyIDEA Web UI.
+For quick setup, you can also configure a connector at the command line using
+:ref:`pimanage` like this::
+
+    pi-manage ca create -t microsoft <name-of-connector>
+
+It will ask you all relevant questions and setup a connector in privacyIDEA.

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # 2020-02-15 Jean-Pierre Höhmann <jean-pierre.hoehmann@netknights.it>
 #            Add webAuthn token
 # 2018-06-15 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -30,7 +28,7 @@
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-__doc__ = """This REST API is used to authenticate the users. A user needs to
+"""This REST API is used to authenticate the users. A user needs to
 authenticate when he wants to use the API for administrative tasks like
 enrolling a token.
 
@@ -58,23 +56,26 @@ from privacyidea.lib.crypto import geturandom, init_hsm
 from privacyidea.lib.audit import getAudit
 from privacyidea.lib.auth import (check_webui_user, ROLE, verify_db_admin,
                                   db_admin_exist)
+from privacyidea.lib.framework import get_app_config_value
 from privacyidea.lib.user import User, split_user, log_used_user
 from privacyidea.lib.policy import PolicyClass, REMOTE_USER
 from privacyidea.lib.realm import get_default_realm, realm_is_defined
-from privacyidea.api.lib.postpolicy import (postpolicy, get_webui_settings, add_user_detail_to_response, check_tokentype, 
-                                            check_tokeninfo, check_serial, no_detail_on_fail, no_detail_on_success,
+from privacyidea.api.lib.postpolicy import (postpolicy, add_user_detail_to_response, check_tokentype,
+                                            check_tokeninfo, check_serial, no_detail_on_success,
                                             get_webui_settings)
 from privacyidea.api.lib.prepolicy import (is_remote_user_allowed, prepolicy,
                                            pushtoken_disable_wait, webauthntoken_authz, webauthntoken_request,
-                                           webauthntoken_auth)
+                                           webauthntoken_auth, increase_failcounter_on_challenge,
+                                           jwt_validity)
 from privacyidea.api.lib.utils import (send_result, get_all_params,
                                        verify_auth_token, getParam)
-from privacyidea.lib.utils import get_client_ip, hexlify_and_unicode, to_unicode
-from privacyidea.lib.config import get_from_config, SYSCONF, ensure_no_config_object
+from privacyidea.lib.utils import get_client_ip, hexlify_and_unicode, to_unicode, get_plugin_info_from_useragent
+from privacyidea.lib.config import get_from_config, SYSCONF, ensure_no_config_object, get_privacyidea_node
 from privacyidea.lib.event import event, EventConfiguration
 from privacyidea.lib import _
 import logging
 import traceback
+import threading
 
 log = logging.getLogger(__name__)
 
@@ -89,12 +90,11 @@ def before_request():
     """
     ensure_no_config_object()
     request.all_data = get_all_params(request)
-    privacyidea_server = current_app.config.get("PI_AUDIT_SERVERNAME") or \
-                         request.host
+    privacyidea_server = get_app_config_value("PI_AUDIT_SERVERNAME", get_privacyidea_node(request.host))
     g.policy_object = PolicyClass()
     g.audit_object = getAudit(current_app.config)
     g.event_config = EventConfiguration()
-    # access_route contains the ip adresses of all clients, hops and proxies.
+    # access_route contains the ip addresses of all clients, hops and proxies.
     g.client_ip = get_client_ip(request,
                                 get_from_config(SYSCONF.OVERRIDECLIENT))
     # Save the HTTP header in the localproxy object
@@ -102,10 +102,12 @@ def before_request():
     g.serial = getParam(request.all_data, "serial", default=None)
     g.audit_object.log({"success": False,
                         "client": g.client_ip,
-                        "client_user_agent": request.user_agent.browser,
+                        "user_agent": get_plugin_info_from_useragent(request.user_agent.string)[0],
+                        "user_agent_version": get_plugin_info_from_useragent(request.user_agent.string)[1],
                         "privacyidea_server": privacyidea_server,
                         "action": "{0!s} {1!s}".format(request.method, request.url_rule),
                         "action_detail": "",
+                        "thread_id": "{0!s}".format(threading.current_thread().ident),
                         "info": ""})
 
     username = getParam(request.all_data, "username")
@@ -114,21 +116,23 @@ def before_request():
         # On endpoints like /auth/rights, this is not available
         loginname, realm = split_user(username)
         # overwrite the split realm if we have a realm parameter. Default back to default_realm
-        realm = getParam(request.all_data, "realm", default=realm) or realm or get_default_realm()
+        realm = getParam(request.all_data, "realm") or realm or get_default_realm()
         # Prefill the request.User. This is used by some pre-event handlers
         try:
             request.User = User(loginname, realm)
         except Exception as e:
             request.User = None
-            log.warning(u"Problem resolving user {0!s} in realm {1!s}: {2!s}.".format(loginname, realm, e))
-            log.debug(u"{0!s}".format(traceback.format_exc()))
+            log.warning("Problem resolving user {0!s} in realm {1!s}: {2!s}.".format(loginname, realm, e))
+            log.debug("{0!s}".format(traceback.format_exc()))
 
 
 @jwtauth.route('', methods=['POST'])
+@prepolicy(increase_failcounter_on_challenge, request=request)
 @prepolicy(pushtoken_disable_wait, request)
 @prepolicy(webauthntoken_request, request=request)
 @prepolicy(webauthntoken_authz, request=request)
 @prepolicy(webauthntoken_auth, request=request)
+@prepolicy(jwt_validity, request)
 @postpolicy(get_webui_settings)
 @postpolicy(no_detail_on_success, request=request)
 @postpolicy(add_user_detail_to_response, request=request)
@@ -210,7 +214,8 @@ def get_auth_token():
        }
 
     """
-    validity = timedelta(hours=1)
+    jwt_validaty = getParam(request.all_data, "jwt_validity")
+    validity = timedelta(seconds=int(jwt_validaty))
     username = getParam(request.all_data, "username")
     password = getParam(request.all_data, "password")
     realm_param = getParam(request.all_data, "realm")
@@ -219,21 +224,22 @@ def get_auth_token():
 
     # the realm parameter has precedence! Check if it exists
     if realm_param and not realm_is_defined(realm_param):
-        raise AuthError(_("Authentication failure. Unknown realm: {0!s}.".format(realm_param)),
+        raise AuthError(_("Authentication failure. Unknown realm: {0!s}.").format(realm_param),
                         id=ERROR.AUTHENTICATE_WRONG_CREDENTIALS)
 
     if username is None:
         raise AuthError(_("Authentication failure. Missing Username"),
                         id=ERROR.AUTHENTICATE_MISSING_USERNAME)
 
-    loginname, realm = split_user(username)
-
-    # overwrite the split realm if we have a realm parameter
-    if realm_param:
-        realm = realm_param
-
-    # and finally check if there is a realm
-    realm = realm or get_default_realm()
+    user_obj = request.User
+    if not user_obj:
+        # The user could not be resolved, but it could still be a local administrator
+        loginname, realm = split_user(username)
+        realm = (realm_param or realm or get_default_realm()).lower()
+        user_obj = User()
+    else:
+        realm = user_obj.realm
+        loginname = user_obj.login
 
     # Failsafe to have the user attempt in the log, whatever happens
     # This can be overwritten later
@@ -241,8 +247,8 @@ def get_auth_token():
                         "realm": realm})
 
     secret = current_app.secret_key
-    superuser_realms = current_app.config.get("SUPERUSER_REALM", [])
-    # This is the default role for the logged in user.
+    superuser_realms = [x.lower() for x in current_app.config.get("SUPERUSER_REALM", [])]
+    # This is the default role for the logged-in user.
     # The role privileges may be risen to "admin"
     role = ROLE.USER
     # The way the user authenticated. This could be
@@ -253,8 +259,6 @@ def get_auth_token():
     # Verify the password
     admin_auth = False
     user_auth = False
-
-    user_obj = User()
 
     # Check if the remote user is allowed
     if (request.remote_user == username) and is_remote_user_allowed(request) != REMOTE_USER.DISABLE:
@@ -271,9 +275,9 @@ def get_auth_token():
                                 "user": "",
                                 "administrator": username,
                                 "info": "internal admin"})
+            user_obj = User()
         else:
             # check, if the user exists
-            user_obj = User(loginname, realm)
             g.audit_object.log({"user": user_obj.login,
                                 "realm": user_obj.realm,
                                 "info": log_used_user(user_obj)})
@@ -289,48 +293,60 @@ def get_auth_token():
         log.info("Local admin '{0!s}' successfully logged in.".format(username))
         # This admin is not in the default realm!
         realm = ""
+        user_obj = User()
         g.audit_object.log({"success": True,
                             "user": "",
+                            "realm": "",
                             "administrator": username,
                             "info": "internal admin"})
 
     else:
         # The user could not be identified against the admin database,
         # so we do the rest of the check
-        options = {"g": g,
-                   "clientip": g.client_ip}
-        for key, value in request.all_data.items():
-            if value and key not in ["g", "clientip"]:
-                options[key] = value
-        user_obj = User(loginname, realm)
-        user_auth, role, details = check_webui_user(user_obj,
-                                                    password,
-                                                    options=options,
-                                                    superuser_realms=
-                                                    superuser_realms)
-        details = details or {}
-        if db_admin_exist(loginname) and user_auth and realm == get_default_realm():
-            # If there is a local admin with the same login name as the user
-            # in the default realm, we inform about this in the log file.
-            # This condition can only be checked if the user was authenticated as it
-            # is the only way to verify if such a user exists.
-            log.warning("A user '{0!s}' exists as local admin and as user in "
-                        "your default realm!".format(loginname))
-        if role == ROLE.ADMIN:
-            g.audit_object.log({"user": "",
-                                "administrator": user_obj.login,
-                                "realm": user_obj.realm,
-                                "resolver": user_obj.resolver,
-                                "serial": details.get('serial', None),
-                                "info": u"{0!s}|loginmode={1!s}".format(log_used_user(user_obj),
-                                                                        details.get("loginmode"))})
+        if password is None:
+            g.audit_object.add_to_log({"info": 'Missing parameter "password"'}, add_with_comma=True)
         else:
-            g.audit_object.log({"user": user_obj.login,
-                                "realm": user_obj.realm,
-                                "resolver": user_obj.resolver,
-                                "serial": details.get('serial', None),
-                                "info": u"{0!s}|loginmode={1!s}".format(log_used_user(user_obj),
-                                        details.get("loginmode"))})
+            options = {"g": g,
+                       "clientip": g.client_ip}
+            for key, value in request.all_data.items():
+                if value and key not in ["g", "clientip"]:
+                    options[key] = value
+            user_auth, role, details = check_webui_user(user_obj,
+                                                        password,
+                                                        options=options,
+                                                        superuser_realms=
+                                                        superuser_realms)
+            details = details or {}
+            serials = ",".join([challenge_info["serial"] for challenge_info in details["multi_challenge"]]) \
+                if 'multi_challenge' in details else details.get('serial')
+            if db_admin_exist(user_obj.login) and user_auth and realm == get_default_realm():
+                # If there is a local admin with the same login name as the user
+                # in the default realm, we inform about this in the log file.
+                # This condition can only be checked if the user was authenticated as it
+                # is the only way to verify if such a user exists.
+                log.warning("A user '{0!s}' exists as local admin and as user in "
+                            "your default realm!".format(user_obj.login))
+            if role == ROLE.ADMIN:
+                g.audit_object.log({"user": "",
+                                    "administrator": user_obj.login,
+                                    "realm": user_obj.realm,
+                                    "resolver": user_obj.resolver,
+                                    "serial": serials,
+                                    "info": "{0!s}|loginmode={1!s}".format(log_used_user(user_obj),
+                                                                           details.get("loginmode"))})
+            else:
+                g.audit_object.log({"user": user_obj.login,
+                                    "realm": user_obj.realm,
+                                    "resolver": user_obj.resolver,
+                                    "serial": serials,
+                                    "info": "{0!s}|loginmode={1!s}".format(log_used_user(user_obj),
+                                                                           details.get("loginmode"))})
+
+            if not user_auth and "multi_challenge" in details and len(details["multi_challenge"]) > 0:
+                return send_result({"role": role,
+                                    "username": loginname,
+                                    "realm": realm},
+                                   details=details)
 
     if not admin_auth and not user_auth:
         raise AuthError(_("Authentication failure. Wrong credentials"),
@@ -370,6 +386,11 @@ def get_auth_token():
                         "exp": datetime.utcnow() + validity,
                         "rights": rights},
                        secret, algorithm='HS256')
+
+    # set the logged-in user for post-policies and post-events
+    g.logged_in_user = {"username": loginname,
+                        "realm": realm,
+                        "role": role}
 
     # Add the role to the response, so that the WebUI can make decisions
     # based on this (only show selfservice, not the admin part)

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  product:  privacyIDEA is a fork of LinOTP
 #  May, 08 2014 Cornelius Kölbel
 #  http://www.privacyidea.org
@@ -51,6 +49,8 @@ from privacyidea.lib.utils import (is_true, to_unicode, to_bytes,
                                    hexlify_and_unicode)
 
 from .password import PASSWORD
+from cryptography.hazmat.primitives.ciphers import algorithms
+from cryptography.hazmat.primitives import padding
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,10 @@ def create_key_from_password(password):
     """
     key = sha256(to_bytes(password)).digest()[0:32]
     return key
+
+
+def int_list_to_bytestring(int_list):  # pragma: no cover
+    return b"".join([bytes((i, )) for i in int_list])
 
 
 class SecurityModule(object):
@@ -145,11 +149,10 @@ class SecurityModule(object):
 
         This function returns a unicode string with a
         hexlified contents of the IV and the encrypted data separated by a
-        colon like u"4956:44415441"
+        colon like "4956:44415441"
 
         :param password: The password that is to be encrypted
         :type password: str
-
         :return: encrypted data - leading iv, separated by the ':'
         :rtype: str
         """
@@ -161,11 +164,10 @@ class SecurityModule(object):
 
         This function returns a unicode string with a
         hexlified contents of the IV and the encrypted data separated by a
-        colon like u"4956:44415441"
+        colon like "4956:44415441"
 
         :param pin: the pin that should be encrypted
         :type pin: str
-
         :return: encrypted data - leading iv, separated by the ':'
         :rtype: str
         """
@@ -398,13 +400,10 @@ class DefaultSecurityModule(SecurityModule):
 
         key = self._get_secret(key_id)
 
-        # convert input to ascii, so we can securely append bin data for padding
-        input_data = binascii.b2a_hex(data)
-        input_data += b"\x01\x02"
-        padding = (16 - len(input_data) % 16) % 16
-        input_data += padding * b"\0"
+        padder = padding.PKCS7(algorithms.AES.block_size).padder()
+        padded_data = padder.update(data) + padder.finalize()
 
-        res = aes_cbc_encrypt(key, iv, input_data)
+        res = aes_cbc_encrypt(key, iv, padded_data)
 
         if self.crypted is False:
             zerome(key)
@@ -486,13 +485,19 @@ class DefaultSecurityModule(SecurityModule):
 
         key = self._get_secret(key_id)
         output = aes_cbc_decrypt(key, iv, enc_data)
-        # remove padding
-        eof = output.rfind(b"\x01\x02")
-        if eof >= 0:
-            output = output[:eof]
 
-        # convert output from ascii, back to bin data
-        data = binascii.unhexlify(output)
+        try:
+            unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
+            data = unpadder.update(output) + unpadder.finalize()
+        except ValueError as _e:
+            # try legacy padding
+            # remove padding
+            eof = output.rfind(b"\x01\x02")
+            if eof >= 0:
+                output = output[:eof]
+
+            # convert output from ascii, back to bin data
+            data = binascii.unhexlify(output)
 
         if self.crypted is False:
             zerome(key)

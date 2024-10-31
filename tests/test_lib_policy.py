@@ -1,4 +1,3 @@
-# coding: utf-8
 """
 This test file tests the lib.policy.py
 
@@ -7,6 +6,7 @@ The lib.policy.py only depends on the database model.
 import dateutil
 import mock
 
+from privacyidea.models import PolicyDescription
 from .base import MyTestCase, FakeFlaskG, FakeAudit
 
 from privacyidea.lib.auth import ROLE
@@ -23,7 +23,6 @@ from privacyidea.lib.resolver import (save_resolver, get_resolver_list,
                                       delete_resolver)
 from privacyidea.lib.error import ParameterError
 from privacyidea.lib.user import User
-import datetime
 from .base import PWFILE as FILE_PASSWORDS
 from .base import PWFILE2 as FILE_PASSWD
 
@@ -64,7 +63,8 @@ class PolicyTestCase(MyTestCase):
 
         p = set_policy(name="pol4",
                        action="enroll, init, disable , enable",
-                       scope="admin")
+                       scope="admin",
+                       description="test")
         self.assertTrue(p > 0)
 
         P = PolicyClass()
@@ -83,6 +83,9 @@ class PolicyTestCase(MyTestCase):
                                     action="disable")
         self.assertTrue(len(policies) == 1, len(policies))
         self.assertTrue(policies[0].get("name") == "pol4")
+
+        policies = P.match_policies(name="pol4")
+        self.assertEqual(policies[0].get('description'), 'test')
 
     def test_02_update_policies(self):
         p = set_policy(name="pol1",
@@ -118,7 +121,16 @@ class PolicyTestCase(MyTestCase):
                        action="enroll, init, disable , enable",
                        scope="admin",
                        realm="realm2",
-                       adminuser=["admin", "superroot"])
+                       adminuser=["admin", "superroot"],
+                       description="test3")
+        self.assertTrue(p > 0)
+
+        p = set_policy(name="pol5",
+                       action="enroll, init, disable , enable",
+                       scope="admin",
+                       realm="realm2",
+                       user_case_insensitive=True,
+                       adminuser=["Admin", "superroot"])
         self.assertTrue(p > 0)
 
         # enable and disable policies
@@ -149,8 +161,11 @@ class PolicyTestCase(MyTestCase):
         # find policies authorization and realm2
         policies = P.match_policies(action="tokentype", scope=SCOPE.AUTHZ)
         self.assertTrue(len(policies) == 2, policies)
-        # find policies with user admin
+        # find policies with user admin and just as case-insensitive police with Admin
         policies = P.match_policies(scope="admin", adminuser="admin")
+        self.assertTrue(len(policies) == 2, "{0!s}".format(len(policies)))
+        # find policies with user Admin and no case-sensitive police with admin
+        policies = P.match_policies(scope="admin", adminuser="Admin")
         self.assertTrue(len(policies) == 1, "{0!s}".format(len(policies)))
         # find policies with resolver2 and authorization. THe result should
         # be pol2 and pol2a
@@ -169,11 +184,20 @@ class PolicyTestCase(MyTestCase):
         policies = P.match_policies(resolver="resolver1", scope=SCOPE.AUTHZ)
         self.assertTrue(len(policies) == 3, policies)
 
+        policies = P.match_policies(name="pol4")
+        self.assertEqual(policies[0].get('description'), 'test3')
+
+        delete_policy(name="pol5")
+
     def test_04_delete_policy(self):
+        d1 = PolicyDescription.query.filter_by().all()
+        self.assertEqual(len(d1), 1)
         delete_policy(name="pol4")
         P = PolicyClass()
         pol4 = P.match_policies(name="pol4")
         self.assertTrue(pol4 == [], pol4)
+        d1 = PolicyDescription.query.filter_by().all()
+        self.assertEqual(len(d1), 0)
 
     def test_05_export_policies(self):
         P = PolicyClass()
@@ -636,7 +660,9 @@ class PolicyTestCase(MyTestCase):
 
         # create user realm
         (added, failed) = set_realm("realm4",
-                                    ["passwd", "passwords"])
+                                    [
+                                        {'name': "passwd"},
+                                        {'name': "passwords"}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 2)
 
@@ -815,10 +841,10 @@ class PolicyTestCase(MyTestCase):
 
         # create a realm with reso1 being the resolver with the highest priority
         (added, failed) = set_realm("realm1",
-                                    ["reso1", "resoX", "resoA"],
-                                    priority={"reso1": 1,
-                                              "resoX": 2,
-                                              "resoA": 3})
+                                    [
+                                        {'name': "reso1", 'priority': 1},
+                                        {'name': "resoX", 'priority': 2},
+                                        {'name': "resoA", 'priority': 3}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 3)
 
@@ -829,7 +855,7 @@ class PolicyTestCase(MyTestCase):
         self.assertEqual(user_str, "<cornelius.reso1@realm1>")
         # But the user "cornelius" is also contained in other resolves in
         # this realm
-        r = user.get_ordererd_resolvers()
+        r = user.get_ordered_resolvers()
         self.assertEqual(r, ["reso1", "resoX", "resoA"])
         self.assertFalse(user.is_empty())
         self.assertTrue(User().is_empty())
@@ -869,14 +895,14 @@ class PolicyTestCase(MyTestCase):
     def test_22_non_ascii_user(self):
         set_policy(name="polnonascii",
                    action="enroll, otppin=1",
-                   user=u'nönäscii',
+                   user='nönäscii',
                    scope='s')
 
         P = PolicyClass()
         p = P.match_policies(action="enroll", user='somebodyelse')
         self.assertEqual(len(p), 0)
 
-        p = P.match_policies(action="enroll", user=u'nönäscii')
+        p = P.match_policies(action="enroll", user='nönäscii')
         self.assertEqual(len(p), 1)
 
         delete_policy(name="polnonascii")
@@ -990,7 +1016,7 @@ class PolicyTestCase(MyTestCase):
         g.policy_object = PolicyClass()
 
         val = get_action_values_from_options(SCOPE.AUTH, ACTION.CHALLENGETEXT, options)
-        self.assertEqual(val, u"Wo du wolle?")
+        self.assertEqual(val, "Wo du wolle?")
 
         delete_policy("chaltext")
 
@@ -1029,26 +1055,26 @@ class PolicyTestCase(MyTestCase):
                              "fileName": FILE_PASSWD})
         self.assertGreater(rid, 0)
 
-        (added, failed) = set_realm("realm1", ["reso1"])
+        (added, failed) = set_realm("realm1", [{'name': "reso1"}])
         self.assertEqual(len(failed), 0)
         self.assertEqual(len(added), 1)
 
-        (added, failed) = set_realm("realm2", ["reso2"])
+        (added, failed) = set_realm("realm2", [{'name': "reso2"}])
         self.assertEqual(len(failed), 0)
         self.assertEqual(len(added), 1)
 
         cornelius = User(login="cornelius", realm="realm1")
-        nonascii = User(login=u"nönäscii", realm="realm1")
+        nonascii = User(login="nönäscii", realm="realm1")
         selfservice = User(login="selfservice", realm="realm1")
         whoopsie = User(login="whoopsie", realm="realm2")
         set_policy("act1", scope=SCOPE.AUTH, action="{0!s}=userstore".format(ACTION.OTPPIN),
-                   user=u"cornelius, nönäscii")
+                   user="cornelius, nönäscii")
         set_policy("act2", scope=SCOPE.AUTH, action="{0!s}=userstore".format(ACTION.OTPPIN),
                    resolver="reso1")
         set_policy("act3", scope=SCOPE.AUTH, action="{0!s}=none".format(ACTION.OTPPIN),
                    realm="realm1")
         set_policy("act4", scope=SCOPE.AUTH, action="{0!s}=none".format(ACTION.OTPPIN),
-                   user=u"nönäscii", realm="realm1")
+                   user="nönäscii", realm="realm1")
 
         P = PolicyClass()
         self.assertEqual(set(p['name'] for p in P.match_policies(user_object=cornelius)),
@@ -1168,7 +1194,7 @@ class PolicyTestCase(MyTestCase):
                              "fileName": FILE_PASSWORDS})
         self.assertGreater(rid, 0)
 
-        (added, failed) = set_realm("realm1", ["reso1"])
+        (added, failed) = set_realm("realm1", [{'name': "reso1"}])
         self.assertEqual(len(failed), 0)
         self.assertEqual(len(added), 1)
 
@@ -1223,11 +1249,11 @@ class PolicyTestCase(MyTestCase):
         user3.info = {"type": "notverysecure", "groups": ["b", "c"]}
 
         # no user => policy error
-        with self.assertRaisesRegexp(PolicyError, ".* an according object is not available.*"):
+        with self.assertRaisesRegex(PolicyError, ".* an according object is not available.*"):
             P.match_policies(user_object=None)
 
         # empty user => policy error
-        with self.assertRaisesRegexp(PolicyError, ".*Unknown key.*"):
+        with self.assertRaisesRegex(PolicyError, ".*Unknown key.*"):
             P.match_policies(user_object=empty_user)
 
         # user1 => verysecure matches
@@ -1243,7 +1269,7 @@ class PolicyTestCase(MyTestCase):
         # an unforeseen error in the comparison function => policy error
         with mock.patch("privacyidea.lib.policy.compare_values") as mock_function:
             mock_function.side_effect = ValueError
-            with self.assertRaisesRegexp(PolicyError, r".*Invalid comparison.*"):
+            with self.assertRaisesRegex(PolicyError, r".*Invalid comparison.*"):
                 P.match_policies(user_object=user1)
 
         for policy in ["verysecure", "notverysecure"]:
@@ -1282,7 +1308,7 @@ class PolicyTestCase(MyTestCase):
         # an unknown section in the condition
         set_policy("unknownsection", scope=SCOPE.AUTH, action="{0!s}=userstore".format(ACTION.OTPPIN),
                     conditions=[("somesection", "bla", "equals", "verysecure", True)])
-        with self.assertRaisesRegexp(PolicyError, r".*unknown section.*"):
+        with self.assertRaisesRegex(PolicyError, r".*unknown section.*"):
             P.match_policies(user_object=user1)
         delete_policy("unknownsection")
 
@@ -1296,7 +1322,7 @@ class PolicyTestCase(MyTestCase):
         # an unknown key in the condition
         set_policy("unknownkey", scope=SCOPE.AUTH, action="{0!s}=userstore".format(ACTION.OTPPIN),
                     conditions=[("userinfo", "bla", "equals", "verysecure", True)])
-        with self.assertRaisesRegexp(PolicyError, r".*Unknown key.*"):
+        with self.assertRaisesRegex(PolicyError, r".*Unknown key.*"):
             P.match_policies(user_object=user1)
         delete_policy("unknownkey")
 
@@ -1306,7 +1332,7 @@ class PolicyTestCase(MyTestCase):
 
         set_policy("error", scope=SCOPE.AUTH, action="{0!s}=userstore".format(ACTION.OTPPIN),
                    conditions=[("userinfo", "number", "contains", "b", True)])
-        with self.assertRaisesRegexp(PolicyError, r".*Invalid comparison.*"):
+        with self.assertRaisesRegex(PolicyError, r".*Invalid comparison.*"):
             P.match_policies(user_object=user4)
         delete_policy("error")
 
@@ -1512,6 +1538,29 @@ class PolicyTestCase(MyTestCase):
         self.assertEqual(sorted(d.get("set").get("*")), ["off", "on"])
         self.assertEqual(sorted(d.get("set").get("hello")), ["one", "three", "two"])
         self.assertEqual(sorted(d.get("set").get("hello2")), ["*"])
+
+    def test_40_disable_policy_client_remains(self):
+        pname = "client_must_not_vanish"
+        test_ip = "1.2.3.4"
+        set_policy(pname, scope=SCOPE.AUTH,
+                   action="otppin=none", client=test_ip)
+        p = PolicyClass()
+        plist = p.list_policies(name=pname)
+        self.assertIn(test_ip, plist[0].get("client"))
+        # Now disable the policy
+        enable_policy(pname, enable=False)
+        # client is still there
+        p = PolicyClass()
+        plist = p.list_policies(name=pname)
+        self.assertIn(test_ip, plist[0].get("client"))
+        # enable policy again
+        enable_policy(pname, enable=True)
+        # client is still there
+        p = PolicyClass()
+        plist = p.list_policies(name=pname)
+        self.assertIn(test_ip, plist[0].get("client"))
+        # clean up
+        delete_policy(pname)
 
 
 class PolicyMatchTestCase(MyTestCase):

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2020-09-21 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Add possibility of multiple questions and answers
 #  http://www.privacyidea.org
@@ -38,7 +36,7 @@ from privacyidea.lib import _
 from privacyidea.lib.decorators import check_token_locked
 from privacyidea.lib.policy import SCOPE, ACTION, GROUP, get_action_values_from_options
 from privacyidea.lib.crypto import safe_compare
-import random
+import secrets
 import json
 import datetime
 
@@ -225,11 +223,11 @@ class QuestionnaireTokenClass(TokenClass):
                 questions[tinfo.id] = tinfo.Key
         # if all questions are used up, make a new round
         if len(questions) == len(used_questions):
-            log.info(u"User has only {0!s} questions in his token. Reusing questions now.".format(len(questions)))
+            log.info("User has only {0!s} questions in his token. Reusing questions now.".format(len(questions)))
             used_questions = []
         # Reduce the allowed questions
         remaining_questions = {k: v for (k, v) in questions.items() if k not in used_questions}
-        message_id = random.choice(list(remaining_questions))
+        message_id = secrets.choice(list(remaining_questions))
         message = remaining_questions[message_id]
         used_questions = (options.get("data", "") + ",{0!s}".format(message_id)).strip(",")
 
@@ -340,7 +338,7 @@ class QuestionnaireTokenClass(TokenClass):
                                                              options) or 1)
         if len(challengeobject_list) == 1:
             session = int(challengeobject_list[0].session or "0") + 1
-            options["session"] = u"{0!s}".format(session)
+            options["session"] = "{0!s}".format(session)
             # write the used questions to the data field
             options["data"] = challengeobject_list[0].data or ""
             if session < question_number:

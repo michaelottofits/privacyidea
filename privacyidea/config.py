@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
-
 import os
 import logging
-import random
+import secrets
 import string
 log = logging.getLogger(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -33,10 +31,8 @@ WQIDAQAB
 
 def _random_password(size):
     log.info("SECRET_KEY not set in config. Generating a random key.")
-    passwd = [random.choice(string.ascii_lowercase + \
-                            string.ascii_uppercase + string.digits) for _x in range(size)]
-    # return shuffled password
-    random.shuffle(passwd)
+    passwd = [secrets.choice(string.ascii_lowercase + \
+                             string.ascii_uppercase + string.digits) for _x in range(size)]
     return "".join(passwd)
 
 
@@ -74,7 +70,7 @@ class TestingConfig(Config):
     TESTING = True
     # This is used to encrypt the auth token
     SUPERUSER_REALM = ['adminrealm']
-    SECRET_KEY = 'secret'
+    SECRET_KEY = 'secret'  # nosec B105 # used for testing
     SQLALCHEMY_DATABASE_URI = os.environ.get('TEST_DATABASE_URL') or \
         'sqlite:///' + os.path.join(basedir, 'data-test.sqlite')
     # This is used to encrypt the admin passwords
@@ -87,9 +83,10 @@ class TestingConfig(Config):
     CACHE_TYPE = "None"
     PI_SCRIPT_HANDLER_DIRECTORY = "tests/testdata/scripts/"
     PI_NOTIFICATION_HANDLER_SPOOLDIRECTORY = "tests/testdata/"
+    PI_NODE_UUID = "8e4272a9-9037-40df-8aa3-976e4a04b5a9"
     PI_NODE = "Node1"
-    PI_NODES = ["Node1", "Node2"]
     PI_ENGINE_REGISTRY_CLASS = "null"
+    PI_EMAIL_VALIDATOR_MODULES = ["tests.testdata.gmailvalidator"]
     PI_TRUSTED_JWT = [{"public_key": pubtest_key,
                        "algorithm": "HS256",
                        "role": "user",

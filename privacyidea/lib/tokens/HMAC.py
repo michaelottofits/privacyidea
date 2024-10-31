@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA is a fork of LinOTP
 #  May 08, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -35,7 +33,6 @@ import hmac
 import logging
 import struct
 import binascii
-import six
 
 from hashlib import sha1
 
@@ -87,12 +84,12 @@ class HmacOtp(object):
         return dig
 
     def truncate(self, digest):
-        offset = six.indexbytes(digest, -1) & 0x0f
+        offset = digest[-1] & 0x0f
 
-        binary = (six.indexbytes(digest, (offset + 0)) & 0x7f) << 24
-        binary |= (six.indexbytes(digest, (offset + 1)) & 0xff) << 16
-        binary |= (six.indexbytes(digest, (offset + 2)) & 0xff) << 8
-        binary |= (six.indexbytes(digest, (offset + 3)) & 0xff)
+        binary = (digest[offset + 0] & 0x7f) << 24
+        binary |= (digest[offset + 1] & 0xff) << 16
+        binary |= (digest[offset + 2] & 0xff) << 8
+        binary |= (digest[offset + 3] & 0xff)
 
         return binary % (10 ** self.digits)
 

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2017-08-23 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Initial federation handler
 #
@@ -139,7 +137,7 @@ class FederationEventHandler(BaseEventHandler):
             if handler_options.get("resolver"):
                 data["resolver"] = handler_options.get("resolver")
 
-            log.info(u"Sending {0} request to {1!r}".format(method, url))
+            log.info("Sending {0} request to {1!r}".format(method, url))
             requestor = None
             params = None
             headers = {}
@@ -176,6 +174,6 @@ class FederationEventHandler(BaseEventHandler):
                                                                  mimetype="application/json")
                 options["response"].status_code = r.status_code
             else:
-                log.warning(u"Unsupported method: {0!r}".format(method))
+                log.warning("Unsupported method: {0!r}".format(method))
 
         return True

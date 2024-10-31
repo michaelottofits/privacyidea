@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA is a fork of LinOTP
 #  May 08, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -52,7 +50,7 @@ from privacyidea.lib.log import log_with
 from privacyidea.lib.tokenclass import TokenClass, TOKENKIND
 from privacyidea.lib.tokens.yubikeytoken import (yubico_check_api_signature,
                                                  yubico_api_signature)
-from six.moves.urllib.parse import urlencode
+from urllib.parse import urlencode
 from privacyidea.lib import _
 from privacyidea.lib.policy import SCOPE, ACTION, GROUP
 
@@ -76,7 +74,7 @@ class YubicoTokenClass(TokenClass):
 
     def __init__(self, db_token):
         TokenClass.__init__(self, db_token)
-        self.set_type(u"yubico")
+        self.set_type("yubico")
         self.tokenid = ""
 
     @staticmethod
@@ -181,10 +179,12 @@ class YubicoTokenClass(TokenClass):
             try:
                 if do_yubico_post:
                     r = requests.post(yubico_url,
-                                      data=p)
+                                      data=p,
+                                      timeout=60)
                 else:
                     r = requests.get(yubico_url,
-                                     params=urlencode(p))
+                                     params=urlencode(p),
+                                     timeout=60)
 
                 if r.status_code == requests.codes.ok:
                     response = r.text

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 This tests the package lib.utils
 """
@@ -19,12 +18,13 @@ from privacyidea.lib.utils import (parse_timelimit,
                                    get_client_ip, sanity_name_check, to_utf8,
                                    to_byte_string, hexlify_and_unicode,
                                    b32encode_and_unicode, to_bytes,
-                                   b64encode_and_unicode, create_png, create_img,
+                                   b64encode_and_unicode, create_img,
                                    convert_timestamp_to_utc, modhex_encode,
                                    modhex_decode, checksum, urlsafe_b64encode_and_unicode,
                                    check_ip_in_policy, split_pin_pass, create_tag_dict,
                                    check_serial_valid, determine_logged_in_userparams,
-                                   to_list, parse_string_to_dict)
+                                   to_list, parse_string_to_dict, convert_imagefile_to_dataimage,
+                                   get_plugin_info_from_useragent, get_computer_name_from_user_agent)
 from privacyidea.lib.crypto import generate_password
 from datetime import timedelta, datetime
 from netaddr import IPAddress, IPNetwork, AddrFormatError
@@ -155,7 +155,7 @@ class UtilsTestCase(MyTestCase):
         self.assertRaises(AddrFormatError, parse_proxy, proxy_def)
         # 10.0.0.12 is not allowed to map because the proxy settings are invalid
         self.assertEqual(check_proxy(list(map(IPAddress, ["10.0.0.12", "1.2.3.4"])), proxy_def),
-                         IPAddress("10.0.12"))
+                         IPAddress("10.0.0.12"))
 
         # check paths with several hops
         # 1.2.3.4 -------> 10.0.0.1 -------> 192.168.1.1 --------> privacyIDEA
@@ -527,8 +527,8 @@ class UtilsTestCase(MyTestCase):
         self.assertEqual(convert_column_to_unicode(None), None)
         self.assertEqual(convert_column_to_unicode(True), "True")
         self.assertEqual(convert_column_to_unicode(False), "False")
-        self.assertEqual(convert_column_to_unicode(b"yes"), u"yes")
-        self.assertEqual(convert_column_to_unicode(u"yes"), u"yes")
+        self.assertEqual(convert_column_to_unicode(b"yes"), "yes")
+        self.assertEqual(convert_column_to_unicode("yes"), "yes")
 
     def test_18_censor_connect_string(self):
         self.assertEqual(censor_connect_string("sqlite:////home/foo/privacyidea/privacyidea/data.sqlite"),
@@ -541,12 +541,12 @@ class UtilsTestCase(MyTestCase):
                          "psql+odbc://pi@localhost/pi")
         self.assertEqual(censor_connect_string("psql+odbc://pi:MySecretPassword123466$@localhost/pi"),
                          "psql+odbc://pi:***@localhost/pi")
-        self.assertEqual(censor_connect_string("mysql://pi:kW44s@@qqWtGYX@localhost/pi"),
+        self.assertEqual(censor_connect_string("mysql://pi:kW44s%40%40qqWtGYX@localhost/pi"),
                          "mysql://pi:***@localhost/pi")
-        self.assertEqual(censor_connect_string(u"mysql://knöbel:föö@localhost/pi"),
-                         u"mysql://knöbel:***@localhost/pi")
-        self.assertEqual(censor_connect_string(u"oracle+cx_oracle://pi:MySecretPassword1234@localhost:1521/?service_name=my_database"),
-                         u"oracle+cx_oracle://pi:***@localhost:1521/?service_name=my_database")
+        self.assertEqual(censor_connect_string("mysql://knöbel:föö@localhost/pi"),
+                         "mysql://knöbel:***@localhost/pi")
+        self.assertEqual(censor_connect_string("oracle+cx_oracle://pi:MySecretPassword1234@localhost:1521/?service_name=my_database"),
+                         "oracle+cx_oracle://pi:***@localhost:1521/?service_name=my_database")
 
     def test_19_truncate_comma_list(self):
         r = truncate_comma_list("123456,234567,345678", 19)
@@ -748,14 +748,14 @@ class UtilsTestCase(MyTestCase):
 
     def test_24_sanity_name_check(self):
         self.assertTrue(sanity_name_check('Hello_World'))
-        with self.assertRaisesRegexp(Exception, "non conformant characters in the name"):
+        with self.assertRaisesRegex(Exception, "non conformant characters in the name"):
             sanity_name_check('Hello World!')
         self.assertTrue(sanity_name_check('Hello World', name_exp='^[A-Za-z\\ ]+$'))
-        with self.assertRaisesRegexp(Exception, "non conformant characters in the name"):
+        with self.assertRaisesRegex(Exception, "non conformant characters in the name"):
             sanity_name_check('Hello_World', name_exp='^[A-Za-z]+$')
 
     def test_25_encodings(self):
-        u = u'Hello Wörld'
+        u = 'Hello Wörld'
         b = b'Hello World'
         self.assertEqual(to_utf8(None), None)
         self.assertEqual(to_utf8(u), u.encode('utf8'))
@@ -775,40 +775,34 @@ class UtilsTestCase(MyTestCase):
         self.assertEqual(to_byte_string(10), b'10')
 
     def test_26_conversions(self):
-        self.assertEqual(hexlify_and_unicode(u'Hallo'), u'48616c6c6f')
-        self.assertEqual(hexlify_and_unicode(b'Hallo'), u'48616c6c6f')
-        self.assertEqual(hexlify_and_unicode(b'\x00\x01\x02\xab'), u'000102ab')
+        self.assertEqual(hexlify_and_unicode('Hallo'), '48616c6c6f')
+        self.assertEqual(hexlify_and_unicode(b'Hallo'), '48616c6c6f')
+        self.assertEqual(hexlify_and_unicode(b'\x00\x01\x02\xab'), '000102ab')
 
-        self.assertEqual(b32encode_and_unicode(u'Hallo'), u'JBQWY3DP')
-        self.assertEqual(b32encode_and_unicode(b'Hallo'), u'JBQWY3DP')
-        self.assertEqual(b32encode_and_unicode(b'\x00\x01\x02\xab'), u'AAAQFKY=')
+        self.assertEqual(b32encode_and_unicode('Hallo'), 'JBQWY3DP')
+        self.assertEqual(b32encode_and_unicode(b'Hallo'), 'JBQWY3DP')
+        self.assertEqual(b32encode_and_unicode(b'\x00\x01\x02\xab'), 'AAAQFKY=')
 
-        self.assertEqual(b64encode_and_unicode(u'Hallo'), u'SGFsbG8=')
-        self.assertEqual(b64encode_and_unicode(b'Hallo'), u'SGFsbG8=')
-        self.assertEqual(b64encode_and_unicode(b'\x00\x01\x02\xab'), u'AAECqw==')
+        self.assertEqual(b64encode_and_unicode('Hallo'), 'SGFsbG8=')
+        self.assertEqual(b64encode_and_unicode(b'Hallo'), 'SGFsbG8=')
+        self.assertEqual(b64encode_and_unicode(b'\x00\x01\x02\xab'), 'AAECqw==')
 
-        self.assertEqual(urlsafe_b64encode_and_unicode(u'Hallo'), u'SGFsbG8=')
-        self.assertEqual(urlsafe_b64encode_and_unicode(b'Hallo'), u'SGFsbG8=')
-        self.assertEqual(urlsafe_b64encode_and_unicode(b'\x00\x01\x02\xab'), u'AAECqw==')
+        self.assertEqual(urlsafe_b64encode_and_unicode('Hallo'), 'SGFsbG8=')
+        self.assertEqual(urlsafe_b64encode_and_unicode(b'Hallo'), 'SGFsbG8=')
+        self.assertEqual(urlsafe_b64encode_and_unicode(b'\x00\x01\x02\xab'), 'AAECqw==')
         self.assertEqual(urlsafe_b64encode_and_unicode(b'\xfa\xfb\xfc\xfd\xfe\xff'),
-                          u'-vv8_f7_')
+                          '-vv8_f7_')
 
     def test_27_images(self):
-        png_b64 = u'iVBORw0KGgoAAAANSUhEUgAAASIAAAEiAQAAAAB1xeIbAAABgElEQVR4nO2ZQ' \
-                  u'Y6DMBAEaxbujpQH5CnwdPOglexjJKLeQ2xCsofdC4HA+IDAlERrGKx2Y+LvMX' \
-                  u'z9AwKnnHLKKae2TlkZLZBbrM91pl9V1yGoTpKUwOx0M0UaSZKeqffrOgSVS49' \
-                  u'LqZH1QPkMVtZ1KGq4jG9+4mGp9uXaoP1d/K2q3wcVJEVAsd6RNL5S79e1Z6r0' \
-                  u'/WAANFiXzgA3W1fXEah77R/BgobL1SA8Rw1bVf/ZFHcr2aXmfpDSNKfxfqa4V' \
-                  u'fWfTZU6E8Zi8mOQpNRI8TG3VfWfTc36XqrNTzdtq7z2y1G17wHFMH8Lkq85y1' \
-                  u'Kz2peyP5Z/1eG1X4R69jkjRvhuNVyuJvKp3tiq+j1Qjxyz7K1y8f3Wr6pr39T' \
-                  u'kJ6u7UYKZ7fE1Z3mq5phmJ1DMLYrcPL9/J6VII7oEkKclaH1dR6CsB6wPkvWU' \
-                  u'JH8LuvZI1Qw5CMgg8hmRzyOEq7nPWZCa+3uY9rWpZsi+r12O+pVjwojKTOP/a' \
-                  u'51yyimn9kL9ACOsApMnN2KuAAAAAElFTkSuQmCC'
-        self.assertEqual(b64encode_and_unicode(create_png('Hallo')), png_b64)
-        self.assertEqual(create_img('Hello', raw=True),
-                          u'data:image/png;base64,SGVsbG8=')
-        self.assertEqual(create_img('Hallo'),
-                          u'data:image/png;base64,{0!s}'.format(png_b64))
+        hallo_qr_png = "iVBORw0KGgoAAAANSUhEUgAAASIAAAEiAQAAAAB1xeIbAAABC0lEQV" \
+                       "R42u2aQQ6EIBAEJ7sP8El8nSftA0xYGBiM8eIe6E1McTCofSpnmka1" \
+                       "cmNkQ4UKFSpUj1DZGO86//ghriRXvezOQPWbarB3xBP7mM0bsF/Kvh" \
+                       "V6asRzFL+3AezV7H0GezV7s2036v4/fp8r+94B+L2G/cw5vfgTOUfG" \
+                       "/hgV9n5Jp7Bfyr4nSzf92QGwl6211epLZMwSCy6es7zu83aC3di7+8" \
+                       "BelDFtRpzeAVs4P+zXrrWVc26nx742kTHVOad3QCn4vTzfz1RPztHv" \
+                       "a3u8DAuCve59ToR8fwrsa6Xs4wEM96Hulez9PeaM+7CX+n0P+acFF/" \
+                       "aSnBOfcY26l+d7/i1AhQoVqmeqvi4sW6dMYAvIAAAAAElFTkSuQmCC"
+        self.assertEqual(create_img('Hallo'), 'data:image/png;base64,{0!s}'.format(hallo_qr_png))
 
     def test_28_yubikey_utils(self):
         self.assertEqual(modhex_encode(b'\x47'), 'fi')
@@ -839,7 +833,7 @@ class UtilsTestCase(MyTestCase):
         self.assertTrue(found)
 
         # run a test for empty condition
-        found, excluded = check_ip_in_policy("10.0.1.2", ["10.0.1.0/24", "!10.0.1.2", u'', None])
+        found, excluded = check_ip_in_policy("10.0.1.2", ["10.0.1.0/24", "!10.0.1.2", '', None])
         self.assertTrue(excluded)
         self.assertTrue(found)
 
@@ -861,15 +855,15 @@ class UtilsTestCase(MyTestCase):
             path = "/validate/check"
             url_root = ""
 
-        recipient = {"givenname": u"<b>Sömeone</b>"}
+        recipient = {"givenname": "<b>Sömeone</b>"}
         dict1 = create_tag_dict(request=RequestMock(), recipient=recipient)
         self.assertEqual(dict1["ua_string"], "<b>hello world</b>")
         self.assertEqual(dict1["action"], "/validate/check")
-        self.assertEqual(dict1["recipient_givenname"], u"<b>Sömeone</b>")
+        self.assertEqual(dict1["recipient_givenname"], "<b>Sömeone</b>")
         dict2 = create_tag_dict(request=RequestMock(), recipient=recipient, escape_html=True)
         self.assertEqual(dict2["ua_string"], "&lt;b&gt;hello world&lt;/b&gt;")
         self.assertEqual(dict2["action"], "/validate/check")
-        self.assertEqual(dict2["recipient_givenname"], u"&lt;b&gt;Sömeone&lt;/b&gt;")
+        self.assertEqual(dict2["recipient_givenname"], "&lt;b&gt;Sömeone&lt;/b&gt;")
 
     def test_32_allowed_serial_numbers(self):
         self.assertTrue(check_serial_valid("TOTP12345"))
@@ -1018,3 +1012,64 @@ class UtilsTestCase(MyTestCase):
         self.assertEqual(d.get("key1"), ["v1", "v2", "v3"])
         self.assertEqual(d.get("key2"), [])
         self.assertEqual(d.get("key3"), ["v5"])
+
+    def test_36_imagefile_to_dataimage(self):
+        file = "./tests/testdata/FIDO-U2F-Security-Key-444x444.png"
+        dataimage = convert_imagefile_to_dataimage(file)
+        self.assertTrue(dataimage.startswith("data:image/png;base64,iVBOR"))
+
+        # File not found returns an empty datatime string
+        file = "./tests/testdata/FIDO-U2F-Security-Key-444x444.XXX"
+        dataimage = convert_imagefile_to_dataimage(file)
+        self.assertEqual("", dataimage)
+
+        # Try to read a grazy file with an unknown mime-type
+        file = "./tests/testdata/logging.yml"
+        dataimage = convert_imagefile_to_dataimage(file)
+        self.assertEqual("", dataimage)
+
+    def test_37_useragent_split(self):
+        user_agents = [
+            ("privacyidea-cp", "privacyidea-cp", None, None),
+            ("privacyidea-cp/2.0", "privacyidea-cp", "2.0", None),
+            ("Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 "
+             "Firefox/47.0", "Mozilla", "5.0",
+             "(Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"),
+            ("privacyIDEA-Keycloak", "privacyIDEA-Keycloak", None, None),
+            ("privacyIDEA-Keycloak/20 java/8", "privacyIDEA-Keycloak", "20", "java/8"),
+            ("PrivacyIDEA-ADFS", "PrivacyIDEA-ADFS", None, None),
+            ("simpleSAMLphp", "simpleSAMLphp", None, None),
+            ("simpleSAMLphp/1.2.3", "simpleSAMLphp", "1.2.3", None),
+            ("ownCloud", "ownCloud", None, None),
+            ("privacyIDEA-PAM", "privacyIDEA-PAM", None, None),
+            ("privacyIDEA-Shibboleth", "privacyIDEA-Shibboleth", None, None),
+            ("privacyIDEA-LDAP-Proxy", "privacyIDEA-LDAP-Proxy", None, None),
+            ("privacyIDEA-LDAP-Proxy/10", "privacyIDEA-LDAP-Proxy", "10", None),
+            # matching fails completely
+            ("#test", "", None, None),
+            # matching fails after first dot
+            ("1.2.3", "1", None, None),
+            # matching stops after missing version
+            ("SomePlugin/ Some Comment", "SomePlugin", None, None),
+            # no user-agent string given
+            ("", "", None, None),
+            (None, "", None, None)
+        ]
+
+        for val in user_agents:
+            res = get_plugin_info_from_useragent(val[0])
+            self.assertEqual(res, val[1:], res)
+
+    def test_38_get_computer_name(self):
+        data = {"privacyidea-cp/1.1.1 Windows/Laptop-1": "Laptop-1",
+                "privacyidea-cp/1.1.1 ComputerName/Laptop-2": "Laptop-2",
+                "privacyidea-pam/2.2.2 Linux/Server-3": "Server-3",
+                "privacyidea-pam/2.2.2 Hostname/Server-4": "Server-4",
+                "privacyidea-mac/3.3.3 Mac/Server-5": "Server-5",
+                "privacyidea-mac/3.3.3": None,
+                "": None,
+                None: None}
+
+        for k, v in data.items():
+            res = get_computer_name_from_user_agent(k)
+            self.assertEqual(v, res)

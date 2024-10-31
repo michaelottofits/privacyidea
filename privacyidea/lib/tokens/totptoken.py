@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  (c) 2015 Cornelius Kölbel - cornelius@privacyidea.org
 #
 #  2017-12-01 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -34,7 +32,6 @@ This file contains the definition of the TOTP token class
 It depends on the DB model, and the lib.tokenclass.
 TOTP is defined in https://tools.ietf.org/html/rfc6238
 """
-from __future__ import division
 import logging
 import time
 import datetime
@@ -43,10 +40,10 @@ from privacyidea.lib.config import get_from_config
 from privacyidea.lib.log import log_with
 from privacyidea.lib.tokenclass import TokenClass
 from privacyidea.lib.tokens.hotptoken import HotpTokenClass
-from privacyidea.lib.decorators import check_token_locked
+from privacyidea.lib.decorators import check_token_locked, check_token_otp_length
 from privacyidea.lib.policy import ACTION, SCOPE, GROUP, Match
 from privacyidea.lib.utils import determine_logged_in_userparams
-from privacyidea.lib import _
+from privacyidea.lib import _, lazy_gettext
 
 optional = True
 required = False
@@ -60,6 +57,8 @@ class TotpTokenClass(HotpTokenClass):
     # but the last used OTP value, so we need to set this to 0.
     previous_otp_offset = 0
 
+    desc_timestep = lazy_gettext('Specify the time step of the time-based OTP token.')
+
     @log_with(log)
     def __init__(self, db_token):
         """
@@ -69,7 +68,7 @@ class TotpTokenClass(HotpTokenClass):
         :type db_token:  orm object
         """
         TokenClass.__init__(self, db_token)
-        self.set_type(u"totp")
+        self.set_type("totp")
         self.hKeyRequired = True
 
     @staticmethod
@@ -113,47 +112,36 @@ class TotpTokenClass(HotpTokenClass):
                    SCOPE.USER: {
                        'totp_timestep': {'type': 'int',
                                          'value': [30, 60],
-                                         'desc': 'Specify the time step of '
-                                                 'the timebased OTP token.'},
+                                         'desc': TotpTokenClass.desc_timestep},
                        'totp_hashlib': {'type': 'str',
                                         'value': ["sha1",
                                                   "sha256",
                                                   "sha512"],
-                                        'desc': 'Specify the hashlib to be used. '
-                                                'Can be SHA1, SHA256 or SHA512.'},
+                                        'desc': TotpTokenClass.desc_hash_func},
                        'totp_otplen': {'type': 'int',
                                        'value': [6, 8],
-                                       'desc': "Specify the OTP length to be "
-                                               "used."},
+                                       'desc': TotpTokenClass.desc_otp_len},
                        'totp_force_server_generate': {'type': 'bool',
-                                                      'desc': _("Force the key to "
-                                                                "be generated on "
-                                                                "the server.")},
+                                                      'desc': TotpTokenClass.desc_key_gen},
                        '2step': {'type': 'str',
                                  'value': ['allow', 'force'],
-                                 'desc': _('Specify whether users are allowed or '
-                                           'forced to use two-step enrollment.')}
+                                 'desc': TotpTokenClass.desc_two_step_user}
                    },
                    SCOPE.ADMIN: {
                        'totp_timestep': {'type': 'int',
                                          'value': [30, 60],
-                                         'desc': 'Specify the time step of '
-                                                 'the timebased OTP token.'},
+                                         'desc': TotpTokenClass.desc_timestep},
                        'totp_hashlib': {'type': 'str',
                                         'value': ["sha1",
                                                   "sha256",
                                                   "sha512"],
-                                        'desc': 'Specify the hashlib to be used. '
-                                                'Can be SHA1, SHA256 or SHA512.'},
+                                        'desc': TotpTokenClass.desc_hash_func},
                        'totp_otplen': {'type': 'int',
                                        'value': [6, 8],
-                                       'desc': "Specify the OTP length to be "
-                                               "used."},
+                                       'desc': TotpTokenClass.desc_otp_len},
                        '2step': {'type': 'str',
                                  'value': ['allow', 'force'],
-                                 'desc': _('Specify whether admins are allowed or '
-                                           'forced to use two-step enrollment.')
-                                 }
+                                 'desc': TotpTokenClass.desc_two_step_admin}
                    },
                    SCOPE.ENROLL: {
                        '2step_clientsize': {'type': 'int',
@@ -228,7 +216,7 @@ class TotpTokenClass(HotpTokenClass):
     @property
     def hashlib(self):
         hashlibStr = self.get_tokeninfo("hashlib") or \
-                     get_from_config("totp.hashlib", u'sha1')
+                     get_from_config("totp.hashlib", 'sha1')
         return hashlibStr
 
     @property
@@ -249,7 +237,7 @@ class TotpTokenClass(HotpTokenClass):
         checks if the given OTP value is/are values of this very token at all.
         This is used to autoassign and to determine the serial number of
         a token.
-        In fact it is a check_otp with an enhanced window.
+        In fact, it is a check_otp with an enhanced window.
 
         :param otp: the to be verified otp value
         :type otp: string
@@ -272,49 +260,39 @@ class TotpTokenClass(HotpTokenClass):
 
     @staticmethod
     def _time2counter(T0, timeStepping=60):
-        rnd = 0.5
-        counter = int((T0 / timeStepping) + rnd)
+        counter = int(T0 / timeStepping)
         return counter
 
     @staticmethod
     def _counter2time(counter, timeStepping=60):
-        rnd = 0.5
-        T0 = (float(counter) - rnd) * int(timeStepping)
+        T0 = float(counter * int(timeStepping))
         return T0
 
     @staticmethod
-    def _getTimeFromCounter(counter, timeStepping=30, rnd=1):
-        idate = int(counter - rnd) * timeStepping
-        ddate = datetime.datetime.fromtimestamp(idate / 1.0)
-        return ddate
-
-    @staticmethod
     @log_with(log)
-    def _time2float(curTime):
+    def _time2float(curtime):
         """
-        convert a datetime object or an datetime sting into a
-        float
-        s. http://bugs.python.org/issue12750
+        Convert a datetime object into a float (POSIX timestamp).
+        Timezone-naive datetime objects will be interpreted as UTC.
+        To determine if a datetime object is timezone-aware see:
+        https://docs.python.org/3.10/library/datetime.html#determining-if-an-object-is-aware-or-naive
 
-        :param curTime: time in datetime format
-        :type curTime: datetime object
-
-        :return: time as float
+        :param curtime: time in datetime format
+        :type curtime: datetime.datetime
+        :return: seconds since 1.1.1970
         :rtype: float
         """
-        dt = datetime.datetime.now()
-        if type(curTime) == datetime.datetime:
-            dt = curTime
+        if curtime:
+            if curtime.tzinfo and curtime.tzinfo.utcoffset(curtime):
+                # curtime is timezone aware
+                return curtime.timestamp()
+            else:
+                # curtime is naive
+                return curtime.replace(tzinfo=datetime.timezone.utc).timestamp()
+        # return the current timestamp
+        return datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
 
-        td = (dt - datetime.datetime(1970, 1, 1))
-        # for python 2.6 compatibility, we have to implement
-        # 2.7 .total_seconds()::
-        # TODO: fix to float!!!!
-        tCounter = ((td.microseconds +
-                     (td.seconds + td.days * 24 * 3600)
-                     * 10 ** 6) * 1.0) / 10 ** 6
-        return tCounter
-
+    @check_token_otp_length
     @check_token_locked
     def check_otp(self, anOtpVal, counter=None, window=None, options=None):
         """
@@ -444,7 +422,7 @@ class TotpTokenClass(HotpTokenClass):
                 else:
                     log.info("Autoresync successful for token {0!s}.".format(self.token.serial))
                     server_time = time.time()
-                    counter = int((server_time / self.timestep) + 0.5)
+                    counter = self._time2counter(server_time, self.timestep)
 
                     shift = otp2c - counter
                     info["timeShift"] = shift
@@ -490,7 +468,7 @@ class TotpTokenClass(HotpTokenClass):
         else:
             server_time = time.time() + self.timeshift
 
-        counter = int((server_time / self.timestep) + 0.5)
+        counter = self._time2counter(server_time, self.timestep)
         log.debug("counter (current time): {0:d}".format(counter))
 
         oCount = self.get_otp_count()
@@ -571,12 +549,12 @@ class TotpTokenClass(HotpTokenClass):
                            self.get_hashlib(self.hashlib))
 
         if time_seconds is None:
-            time_seconds = self._time2float(datetime.datetime.now())
+            time_seconds = time.time()
         if current_time:
             time_seconds = self._time2float(current_time)
 
         # we don't need to round here as we have already float
-        counter = int(((time_seconds - self.timeshift) / self.timestep))
+        counter = self._time2counter(time_seconds + self.timeshift, self.timestep)
         otpval = hmac2Otp.generate(counter=counter,
                                    inc_counter=False,
                                    do_truncation=do_truncation,
@@ -586,7 +564,7 @@ class TotpTokenClass(HotpTokenClass):
         combined = "{0!s}{1!s}".format(otpval, pin)
         if get_from_config("PrependPin") == "True":
             combined = "{0!s}{1!s}".format(pin, otpval)
-            
+
         return 1, pin, otpval, combined
 
     @log_with(log)
@@ -628,7 +606,7 @@ class TotpTokenClass(HotpTokenClass):
             tCounter = self._time2float(datetime.datetime.now())
 
         # we don't need to round here as we have alread float
-        counter = int(((tCounter - self.timeshift) / self.timestep))
+        counter = self._time2counter(tCounter - self.timeshift, self.timestep)
 
         otp_dict["shift"] = self.timeshift
         otp_dict["timeStepping"] = self.timeshift
@@ -639,13 +617,13 @@ class TotpTokenClass(HotpTokenClass):
                 otpval = hmac2Otp.generate(counter=counter + i,
                                            inc_counter=False)
                 timeCounter = ((counter + i) * self.timestep) + self.timeshift
-                
+
                 val_time = datetime.datetime.\
                     fromtimestamp(timeCounter).strftime("%Y-%m-%d %H:%M:%S")
                 otp_dict["otp"][counter + i] = {'otpval': otpval,
                                                 'time': val_time}
             ret = True
-            
+
         return ret, error, otp_dict
 
     @staticmethod
@@ -656,26 +634,15 @@ class TotpTokenClass(HotpTokenClass):
         return settings.get(key, "")
 
     @classmethod
-    def get_default_settings(cls, g, params):
+    def _get_default_settings(cls, g, role="user", username=None, userrealm=None,
+                              adminuser=None, adminrealm=None):
         """
-        This method returns a dictionary with default settings for token
-        enrollment.
-        These default settings are defined in SCOPE.USER or SCOPE.ADMIN and are
-        totp_hashlib, totp_timestep and totp_otplen.
-        If these are set, the user or admin will only be able to enroll tokens
-        with these values.
+        Internal function that can be called either during enrollment via /token/init or during
+        enrollment via validate/check.
+        This way we have consistent policy handling.
+        """
 
-        The returned dictionary is added to the parameters of the API call.
-        :param g: context object, see documentation of ``Match``
-        :param params: The call parameters
-        :type params: dict
-        :return: default parameters
-        """
         ret = {}
-        if not g.logged_in_user:
-            return ret
-        (role, username, userrealm, adminuser, adminrealm) = determine_logged_in_userparams(g.logged_in_user,
-                                                                                            params)
         hashlib_pol = Match.generic(g, scope=role,
                                     action="totp_hashlib",
                                     user=username,
@@ -704,6 +671,7 @@ class TotpTokenClass(HotpTokenClass):
             ret["otplen"] = list(otplen_pol)[0]
 
         return ret
+
 
     @staticmethod
     def get_import_csv(l):

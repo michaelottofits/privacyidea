@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2018-06-20 Friedrich Weber <friedrich.weber@netknights.it>
 #             Add PeriodicTask, PeriodicTaskOption, PeriodicTaskLastRun
 #  2018-25-09 Paul Lettich <paul.lettich@netknights.it>
@@ -34,31 +32,29 @@
 #
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
+"""privacyIDEA Database definition"""
+
 import binascii
-import six
 import logging
-from datetime import datetime, timedelta
+import traceback
+from datetime import datetime, timedelta, timezone
 
 from dateutil.tz import tzutc
 from json import loads, dumps
 from flask_sqlalchemy import SQLAlchemy
-from privacyidea.lib.crypto import (encrypt,
-                                    encryptPin,
-                                    decryptPin,
-                                    geturandom,
-                                    hash,
-                                    SecretObj,
-                                    get_rand_digit_str)
+
+from privacyidea.lib.crypto import (encrypt, encryptPin, decryptPin,
+                                    geturandom, hash, SecretObj, pass_hash,
+                                    verify_pass_hash, get_rand_digit_str)
 from sqlalchemy import and_
-from sqlalchemy.schema import Sequence
+from sqlalchemy.schema import Sequence, CreateSequence
 from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.sql.expression import ColumnElement
+from sqlalchemy.exc import IntegrityError
 from .lib.log import log_with
 from privacyidea.lib.utils import (is_true, convert_column_to_unicode,
                                    hexlify_and_unicode)
-from privacyidea.lib.crypto import pass_hash, verify_pass_hash
 from privacyidea.lib.framework import get_app_config_value
+from privacyidea.lib.error import DatabaseError
 
 log = logging.getLogger(__name__)
 
@@ -81,17 +77,27 @@ def compile_datetime_mysql(type_, compiler, **kw):  # pragma: no cover
     return "DATETIME(6)"
 
 
+# Fix creation of sequences on MariaDB (and MySQL, which does not support
+# sequences anyway) with galera by adding INCREMENT BY 0 to CREATE SEQUENCE
+@compiles(CreateSequence, 'mysql')
+@compiles(CreateSequence, 'mariadb')
+def increment_by_zero(element, compiler, **kw):  # pragma: no cover
+    text = compiler.visit_create_sequence(element, **kw)
+    text = text + " INCREMENT BY 0"
+    return text
+
+
 class MethodsMixin(object):
     """
     This class mixes in some common Class table functions like
     delete and save
     """
-    
+
     def save(self):
         db.session.add(self)
         db.session.commit()
         return self.id
-    
+
     def delete(self):
         ret = self.id
         db.session.delete(self)
@@ -142,6 +148,23 @@ class TimestampMethodsMixin(object):
         return ret
 
 
+# token_container_association_table = (
+#     db.Table('tokencontainertoken',
+#              db.metadata,
+#              db.Column('token_id', db.Integer, db.ForeignKey('token.id'), primary_key=True),
+#              db.Column('container_id', db.Integer, db.ForeignKey('tokencontainer.id'), primary_key=True)))
+#
+
+class TokenContainerToken(MethodsMixin, db.Model):
+    """
+    Association table to link tokens to containers.
+    """
+    __tablename__ = 'tokencontainertoken'
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+    token_id = db.Column('token_id', db.Integer, db.ForeignKey('token.id'), primary_key=True)
+    container_id = db.Column('container_id', db.Integer, db.ForeignKey('tokencontainer.id'), primary_key=True)
+
+
 class Token(MethodsMixin, db.Model):
     """
     The "Token" table contains the basic token data.
@@ -162,32 +185,32 @@ class Token(MethodsMixin, db.Model):
     id = db.Column(db.Integer, Sequence("token_seq"),
                    primary_key=True,
                    nullable=False)
-    description = db.Column(db.Unicode(80), default=u'')
-    serial = db.Column(db.Unicode(40), default=u'',
+    description = db.Column(db.Unicode(80), default='')
+    serial = db.Column(db.Unicode(40), default='',
                        unique=True,
                        nullable=False,
                        index=True)
     tokentype = db.Column(db.Unicode(30),
-                          default=u'HOTP',
+                          default='HOTP',
                           index=True)
     user_pin = db.Column(db.Unicode(512),
-                         default=u'')  # encrypt
+                         default='')  # encrypt
     user_pin_iv = db.Column(db.Unicode(32),
-                            default=u'')  # encrypt
+                            default='')  # encrypt
     so_pin = db.Column(db.Unicode(512),
-                       default=u'')  # encrypt
+                       default='')  # encrypt
     so_pin_iv = db.Column(db.Unicode(32),
-                          default=u'')  # encrypt
+                          default='')  # encrypt
     pin_seed = db.Column(db.Unicode(32),
-                         default=u'')
+                         default='')
     otplen = db.Column(db.Integer(),
                        default=6)
     pin_hash = db.Column(db.Unicode(512),
-                         default=u'')  # hashed
-    key_enc = db.Column(db.Unicode(1024),
-                        default=u'')  # encrypt
+                         default='')  # hashed
+    key_enc = db.Column(db.Unicode(2800),
+                        default='')  # encrypt
     key_iv = db.Column(db.Unicode(32),
-                       default=u'')
+                       default='')
     maxfail = db.Column(db.Integer(),
                         default=10)
     active = db.Column(db.Boolean(),
@@ -206,18 +229,21 @@ class Token(MethodsMixin, db.Model):
     sync_window = db.Column(db.Integer(),
                             default=1000)
     rollout_state = db.Column(db.Unicode(10),
-                              default=u'')
+                              default='')
     info_list = db.relationship('TokenInfo', lazy='select', backref='token')
     # This creates an attribute "token" in the TokenOwner object
     owners = db.relationship('TokenOwner', lazy='dynamic', backref='token')
 
-    def __init__(self, serial, tokentype=u"",
+    # Container
+    container = db.relationship('TokenContainer', secondary='tokencontainertoken', back_populates='tokens')
+
+    def __init__(self, serial, tokentype="",
                  isactive=True, otplen=6,
-                 otpkey=u"",
+                 otpkey="",
                  userid=None, resolver=None, realm=None,
                  **kwargs):
         super(Token, self).__init__(**kwargs)
-        self.serial = u'' + serial
+        self.serial = '' + serial
         self.tokentype = tokentype
         self.count = 0
         self.failcount = 0
@@ -227,7 +253,7 @@ class Token(MethodsMixin, db.Model):
         self.locked = False
         self.count_window = 10
         self.otplen = otplen
-        self.pin_seed = u""
+        self.pin_seed = ""
         self.set_otpkey(otpkey)
 
         # also create the user assignment
@@ -250,28 +276,34 @@ class Token(MethodsMixin, db.Model):
     @property
     def first_owner(self):
         return self.owners.first()
-            
+
+    @property
+    def all_owners(self):
+        return self.owners.all()
+
     @log_with(log)
     def delete(self):
-        # some DBs (eg. DB2) run in deadlock, if the TokenRealm entry
-        # is deleted via  key relation
-        # so we delete it explicit
+        # some DBs (e.g. DB2) run in a deadlock, if the TokenRealm entry
+        # is deleted via key relation, so we delete it explicitly
         ret = self.id
-        db.session.query(TokenRealm)\
-                  .filter(TokenRealm.token_id == self.id)\
-                  .delete()
-        db.session.query(TokenOwner)\
-                  .filter(TokenOwner.token_id == self.id)\
-                  .delete()
-        db.session.query(MachineToken)\
-                  .filter(MachineToken.token_id == self.id)\
-                  .delete()
-        db.session.query(Challenge)\
-                  .filter(Challenge.serial == self.serial)\
-                  .delete()
-        db.session.query(TokenInfo)\
-                  .filter(TokenInfo.token_id == self.id)\
-                  .delete()
+        db.session.query(TokenRealm) \
+            .filter(TokenRealm.token_id == self.id) \
+            .delete()
+        db.session.query(TokenOwner) \
+            .filter(TokenOwner.token_id == self.id) \
+            .delete()
+        db.session.query(MachineToken) \
+            .filter(MachineToken.token_id == self.id) \
+            .delete()
+        db.session.query(Challenge) \
+            .filter(Challenge.serial == self.serial) \
+            .delete()
+        db.session.query(TokenInfo) \
+            .filter(TokenInfo.token_id == self.id) \
+            .delete()
+        db.session.query(TokenTokengroup) \
+            .filter(TokenTokengroup.token_id == self.id) \
+            .delete()
         db.session.delete(self)
         db.session.commit()
         return ret
@@ -294,7 +326,7 @@ class Token(MethodsMixin, db.Model):
 
         return data
 
-    @log_with(log)
+    @log_with(log, hide_args=[1])
     def set_otpkey(self, otpkey, reset_failcount=True):
         iv = geturandom(16)
         self.key_enc = encrypt(otpkey, iv)
@@ -306,6 +338,38 @@ class Token(MethodsMixin, db.Model):
         self.count = 0
         if reset_failcount is True:
             self.failcount = 0
+
+    def set_tokengroups(self, tokengroups, add=False):
+        """
+        Set the list of the tokengroups.
+
+        This is done by filling the :py:class:`privacyidea.models.TokenTokengroup` table.
+
+        :param tokengroups: the tokengroups
+        :type tokengroups: list[str]
+        :param add: If set, the tokengroups are added. I.e. old tokengroups are not deleted
+        :type add: bool
+        """
+        # delete old Tokengroups
+        if not add:
+            db.session.query(TokenTokengroup) \
+                .filter(TokenTokengroup.token_id == self.id) \
+                .delete()
+        # add new Tokengroups
+        # We must not set the same tokengroup more than once...
+        # uniquify: tokengroups -> set(tokengroups)
+        for tokengroup in set(tokengroups):
+            # Get the id of the realm to add
+            g = Tokengroup.query.filter_by(name=tokengroup).first()
+            if g:
+                # Check if TokenTokengroup already exists
+                tg = TokenTokengroup.query.filter_by(token_id=self.id,
+                                                     tokengroup_id=g.id).first()
+                if not tg:
+                    # If the Tokengroup is not yet attached to the token
+                    Tg = TokenTokengroup(token_id=self.id, tokengroup_id=g.id)
+                    db.session.add(Tg)
+        db.session.commit()
 
     def set_realms(self, realms, add=False):
         """
@@ -320,12 +384,18 @@ class Token(MethodsMixin, db.Model):
         """
         # delete old TokenRealms
         if not add:
-            db.session.query(TokenRealm)\
-                      .filter(TokenRealm.token_id == self.id)\
-                      .delete()
+            db.session.query(TokenRealm) \
+                .filter(TokenRealm.token_id == self.id) \
+                .delete()
         # add new TokenRealms
         # We must not set the same realm more than once...
         # uniquify: realms -> set(realms)
+        if self.first_owner:
+            if self.first_owner.realm.name not in realms:
+                realms.append(self.first_owner.realm.name)
+                log.info(f"The realm of an assigned user cannot be removed from "
+                         f"token {self.first_owner.token.serial} "
+                         f"(realm: {self.first_owner.realm.name})")
         for realm in set(realms):
             # Get the id of the realm to add
             r = Realm.query.filter_by(name=realm).first()
@@ -338,11 +408,12 @@ class Token(MethodsMixin, db.Model):
                     Tr = TokenRealm(token_id=self.id, realm_id=r.id)
                     db.session.add(Tr)
         db.session.commit()
-        
+
     def get_realms(self):
         """
         return a list of the assigned realms
-        :return: realms
+
+        :return: the realms of the token
         :rtype: list
         """
         realms = []
@@ -411,6 +482,9 @@ class Token(MethodsMixin, db.Model):
     def set_description(self, desc):
         if desc is None:
             desc = ""
+        length = len(desc)
+        if length > Token.description.property.columns[0].type.length:
+            desc = desc[:Token.description.property.columns[0].type.length]
         self.description = convert_column_to_unicode(desc)
         return self.description
 
@@ -450,31 +524,14 @@ class Token(MethodsMixin, db.Model):
                         mypHash = self.get_hashed_pin(pin)
                 else:
                     mypHash = pin
-                if mypHash == (self.pin_hash or u""):
+                if mypHash == (self.pin_hash or ""):
                     res = True
         return res
-
-#    def split_pin_pass(self, passwd, prepend=True):
-#        """
-#        The password is split into the PIN and the OTP component.
-#        THe token knows its length, so it can split accordingly.##
-#
-#        :param passwd: The password that is to be split
-#        :param prepend: The PIN is put in front of the OTP value
-#        :return: tuple of (res, pin, otpval)
-#        """
-#        if prepend:
-#            pin = passwd[:-self.otplen]
-#            otp = passwd[-self.otplen:]
-#        else:
-#            otp = passwd[:self.otplen]
-#            pin = passwd[self.otplen:]
-#        return True, pin, otp
 
     def is_pin_encrypted(self, pin=None):
         ret = False
         if pin is None:
-            pin = self.pin_hash or u""
+            pin = self.pin_hash or ""
         if pin.startswith("@@"):
             ret = True
         return ret
@@ -489,16 +546,13 @@ class Token(MethodsMixin, db.Model):
     def set_so_pin(self, soPin):
         """
         For smartcards this sets the security officer pin of the token
-        
+
         :rtype : None
         """
         iv = geturandom(16)
         self.so_pin = encrypt(soPin, iv)
         self.so_pin_iv = hexlify_and_unicode(iv)
         return self.so_pin, self.so_pin_iv
-
-    def __unicode__(self):
-        return self.serial
 
     @log_with(log)
     def get(self, key=None, fallback=None, save=False):
@@ -532,8 +586,8 @@ class Token(MethodsMixin, db.Model):
         ret['tokentype'] = self.tokentype
         ret['info'] = self.get_info()
 
-        ret['resolver'] = u"" if not tokenowner else tokenowner.resolver
-        ret['user_id'] = u"" if not tokenowner else tokenowner.user_id
+        ret['resolver'] = "" if not tokenowner else tokenowner.resolver
+        ret['user_id'] = "" if not tokenowner else tokenowner.user_id
         ret['otplen'] = self.otplen
 
         ret['maxfail'] = self.maxfail
@@ -550,17 +604,23 @@ class Token(MethodsMixin, db.Model):
         for realm_entry in self.realm_list:
             realm_list.append(realm_entry.realm.name)
         ret['realms'] = realm_list
+        # list of tokengroups
+        tokengroup_list = []
+        for tg_entry in self.tokengroup_list:
+            tokengroup_list.append(tg_entry.tokengroup.name)
+        ret['tokengroup'] = tokengroup_list
         return ret
 
-    __str__ = __unicode__
+    def __str__(self):
+        return self.serial
 
     def __repr__(self):
-        '''
+        """
         return the token state as text
 
         :return: token state as string representation
-        :rtype:  string
-        '''
+        :rtype:  str
+        """
         ldict = {}
         for attr in self.__dict__:
             key = "{0!r}".format(attr)
@@ -608,6 +668,30 @@ class Token(MethodsMixin, db.Model):
             tokeninfos = TokenInfo.query.filter_by(token_id=self.id)
         for ti in tokeninfos:
             ti.delete()
+
+    def del_tokengroup(self, tokengroup=None, tokengroup_id=None):
+        """
+        Deletes the tokengroup from the given token.
+        If tokengroup name and id are omitted, all tokengroups are deleted.
+
+        :param tokengroup: The name of the tokengroup
+        :type tokengroup: str
+        :param tokengroup_id: The id of the tokengroup
+        :type tokengroup_id: int
+        :return:
+        """
+        if tokengroup:
+            # We need to resolve the id of the tokengroup
+            t = Tokengroup.query.filter_by(name=tokengroup).first()
+            if not t:
+                raise Exception("tokengroup does not exist")
+            tokengroup_id = t.id
+        if tokengroup_id:
+            tgs = TokenTokengroup.query.filter_by(tokengroup_id=tokengroup_id, token_id=self.id)
+        else:
+            tgs = TokenTokengroup.query.filter_by(token_id=self.id)
+        for tg in tgs:
+            tg.delete()
 
     def get_info(self):
         """
@@ -667,9 +751,9 @@ class TokenInfo(MethodsMixin, db.Model):
     id = db.Column(db.Integer, Sequence("tokeninfo_seq"), primary_key=True)
     Key = db.Column(db.Unicode(255),
                     nullable=False)
-    Value = db.Column(db.UnicodeText(), default=u'')
-    Type = db.Column(db.Unicode(100), default=u'')
-    Description = db.Column(db.Unicode(2000), default=u'')
+    Value = db.Column(db.UnicodeText(), default='')
+    Type = db.Column(db.Unicode(100), default='')
+    Description = db.Column(db.Unicode(2000), default='')
     token_id = db.Column(db.Integer(),
                          db.ForeignKey('token.id'), index=True)
     __table_args__ = (db.UniqueConstraint('token_id',
@@ -678,7 +762,7 @@ class TokenInfo(MethodsMixin, db.Model):
                       {'mysql_row_format': 'DYNAMIC'})
 
     def __init__(self, token_id, Key, Value,
-                 Type= None,
+                 Type=None,
                  Description=None):
         """
         Create a new tokeninfo for a given token_id
@@ -732,12 +816,12 @@ class CustomUserAttribute(MethodsMixin, db.Model):
     """
     __tablename__ = 'customuserattribute'
     id = db.Column(db.Integer(), Sequence("customuserattribute_seq"), primary_key=True)
-    user_id = db.Column(db.Unicode(320), default=u'', index=True)
-    resolver = db.Column(db.Unicode(120), default=u'', index=True)
+    user_id = db.Column(db.Unicode(320), default='', index=True)
+    resolver = db.Column(db.Unicode(120), default='', index=True)
     realm_id = db.Column(db.Integer(), db.ForeignKey('realm.id'))
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.UnicodeText(), default=u'')
-    Type = db.Column(db.Unicode(100), default=u'')
+    Value = db.Column(db.UnicodeText(), default='')
+    Type = db.Column(db.Unicode(100), default='')
 
     def __init__(self, user_id, resolver, realm_id, Key, Value, Type=None):
         """
@@ -810,7 +894,7 @@ class Admin(db.Model):
                 update_dict["email"] = self.email
             if self.password:
                 update_dict["password"] = self.password
-            Admin.query.filter_by(username=self.username)\
+            Admin.query.filter_by(username=self.username) \
                 .update(update_dict)
             ret = c.username
         db.session.commit()
@@ -821,7 +905,6 @@ class Admin(db.Model):
         db.session.commit()
 
 
-@six.python_2_unicode_compatible
 class Config(TimestampMethodsMixin, db.Model):
     """
     The config table holds all the system configuration in key value pairs.
@@ -834,19 +917,19 @@ class Config(TimestampMethodsMixin, db.Model):
     Key = db.Column(db.Unicode(255),
                     primary_key=True,
                     nullable=False)
-    Value = db.Column(db.Unicode(2000), default=u'')
-    Type = db.Column(db.Unicode(2000), default=u'')
-    Description = db.Column(db.Unicode(2000), default=u'')
+    Value = db.Column(db.Unicode(2000), default='')
+    Type = db.Column(db.Unicode(2000), default='')
+    Description = db.Column(db.Unicode(2000), default='')
 
     @log_with(log)
-    def __init__(self, Key, Value, Type=u'', Description=u''):
+    def __init__(self, Key, Value, Type='', Description=''):
         self.Key = convert_column_to_unicode(Key)
         self.Value = convert_column_to_unicode(Value)
         self.Type = convert_column_to_unicode(Type)
         self.Description = convert_column_to_unicode(Description)
 
     def __str__(self):
-        return u"<{0!s} ({1!s})>".format(self.Key, self.Type)
+        return "<{0!s} ({1!s})>".format(self.Key, self.Type)
 
     def save(self):
         db.session.add(self)
@@ -872,28 +955,29 @@ class Realm(TimestampMethodsMixin, db.Model):
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer, Sequence("realm_seq"), primary_key=True,
                    nullable=False)
-    name = db.Column(db.Unicode(255), default=u'',
+    name = db.Column(db.Unicode(255), default='',
                      unique=True, nullable=False)
     default = db.Column(db.Boolean(), default=False)
-    option = db.Column(db.Unicode(40), default=u'')
+    option = db.Column(db.Unicode(40), default='')
     resolver_list = db.relationship('ResolverRealm',
                                     lazy='select',
-                                    foreign_keys='ResolverRealm.realm_id')
-    
+                                    back_populates='realm')
+    container = db.relationship('TokenContainer', secondary='tokencontainerrealm', back_populates='realms')
+
     @log_with(log)
     def __init__(self, realm):
         self.name = realm
-        
+
     def delete(self):
         ret = self.id
         # delete all TokenRealm
-        db.session.query(TokenRealm)\
-                  .filter(TokenRealm.realm_id == ret)\
-                  .delete()
+        db.session.query(TokenRealm) \
+            .filter(TokenRealm.realm_id == ret) \
+            .delete()
         # delete all ResolverRealms
-        db.session.query(ResolverRealm)\
-                  .filter(ResolverRealm.realm_id == ret)\
-                  .delete()
+        db.session.query(ResolverRealm) \
+            .filter(ResolverRealm.realm_id == ret) \
+            .delete()
         # delete the realm
         db.session.delete(self)
         save_config_timestamp()
@@ -901,7 +985,7 @@ class Realm(TimestampMethodsMixin, db.Model):
         return ret
 
 
-class CAConnector(MethodsMixin, db.Model):
+class CAConnector(TimestampMethodsMixin, db.Model):
     """
     The table "caconnector" contains the names and types of the defined
     CA connectors. Each connector has a different configuration, that is
@@ -911,10 +995,10 @@ class CAConnector(MethodsMixin, db.Model):
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer, Sequence("caconnector_seq"), primary_key=True,
                    nullable=False)
-    name = db.Column(db.Unicode(255), default=u"",
+    name = db.Column(db.Unicode(255), default="",
                      unique=True, nullable=False)
-    catype = db.Column(db.Unicode(255), default=u"",
-                      nullable=False)
+    catype = db.Column(db.Unicode(255), default="",
+                       nullable=False)
     caconfig = db.relationship('CAConnectorConfig',
                                lazy='dynamic',
                                backref='caconnector')
@@ -926,11 +1010,12 @@ class CAConnector(MethodsMixin, db.Model):
     def delete(self):
         ret = self.id
         # delete all CAConnectorConfig
-        db.session.query(CAConnectorConfig)\
-                  .filter(CAConnectorConfig.caconnector_id == ret)\
-                  .delete()
+        db.session.query(CAConnectorConfig) \
+            .filter(CAConnectorConfig.caconnector_id == ret) \
+            .delete()
         # Delete the CA itself
         db.session.delete(self)
+        save_config_timestamp()
         db.session.commit()
         return ret
 
@@ -948,11 +1033,11 @@ class CAConnectorConfig(db.Model):
     __tablename__ = 'caconnectorconfig'
     id = db.Column(db.Integer, Sequence("caconfig_seq"), primary_key=True)
     caconnector_id = db.Column(db.Integer,
-                            db.ForeignKey('caconnector.id'))
+                               db.ForeignKey('caconnector.id'))
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.Unicode(2000), default=u'')
-    Type = db.Column(db.Unicode(2000), default=u'')
-    Description = db.Column(db.Unicode(2000), default=u'')
+    Value = db.Column(db.Unicode(2000), default='')
+    Type = db.Column(db.Unicode(2000), default='')
+    Description = db.Column(db.Unicode(2000), default='')
     __table_args__ = (db.UniqueConstraint('caconnector_id',
                                           'Key',
                                           name='ccix_2'),
@@ -965,10 +1050,10 @@ class CAConnectorConfig(db.Model):
         if caconnector_id:
             self.caconnector_id = caconnector_id
         elif caconnector:
-            self.caconnector_id = CAConnector.query\
-                                       .filter_by(name=caconnector)\
-                                       .first()\
-                                       .id
+            self.caconnector_id = CAConnector.query \
+                .filter_by(name=caconnector) \
+                .first() \
+                .id
         self.Key = Key
         self.Value = convert_column_to_unicode(Value)
         self.Type = Type
@@ -976,7 +1061,8 @@ class CAConnectorConfig(db.Model):
 
     def save(self):
         c = CAConnectorConfig.query.filter_by(caconnector_id=self.caconnector_id,
-                                           Key=self.Key).first()
+                                              Key=self.Key).first()
+        save_config_timestamp()
         if c is None:
             # create a new one
             db.session.add(self)
@@ -985,14 +1071,23 @@ class CAConnectorConfig(db.Model):
         else:
             # update
             CAConnectorConfig.query.filter_by(caconnector_id=self.caconnector_id,
-                                           Key=self.Key
-                                           ).update({'Value': self.Value,
-                                                     'Type': self.Type,
-                                                     'Descrip'
-                                                     'tion': self.Description})
+                                              Key=self.Key
+                                              ).update({'Value': self.Value,
+                                                        'Type': self.Type,
+                                                        'Descrip'
+                                                        'tion': self.Description})
             ret = c.id
         db.session.commit()
         return ret
+
+
+class NodeName(db.Model, TimestampMethodsMixin):
+    __tablename__ = "nodename"
+    # TODO: we can use the UUID type here when switching to SQLAlchemy 2.0
+    #  <https://docs.sqlalchemy.org/en/20/core/custom_types.html#backend-agnostic-guid-type>
+    id = db.Column(db.Unicode(36), primary_key=True)
+    name = db.Column(db.Unicode(100), index=True)
+    lastseen = db.Column(db.DateTime(), index=True, default=datetime.now(tz=tzutc()))
 
 
 class Resolver(TimestampMethodsMixin, db.Model):
@@ -1005,28 +1100,27 @@ class Resolver(TimestampMethodsMixin, db.Model):
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer, Sequence("resolver_seq"), primary_key=True,
                    nullable=False)
-    name = db.Column(db.Unicode(255), default=u"",
+    name = db.Column(db.Unicode(255), default="",
                      unique=True, nullable=False)
-    rtype = db.Column(db.Unicode(255), default=u"",
+    rtype = db.Column(db.Unicode(255), default="",
                       nullable=False)
     # This creates an attribute "resolver" in the ResolverConfig object
     config_list = db.relationship('ResolverConfig',
-                                  lazy='select',
-                                  backref='resolver')
+                                  lazy='select')
     realm_list = db.relationship('ResolverRealm',
                                  lazy='select',
-                                 foreign_keys='ResolverRealm.resolver_id')
-    
+                                 back_populates='resolver')
+
     def __init__(self, name, rtype):
         self.name = name
         self.rtype = rtype
-        
+
     def delete(self):
         ret = self.id
         # delete all ResolverConfig
-        db.session.query(ResolverConfig)\
-                  .filter(ResolverConfig.resolver_id == ret)\
-                  .delete()
+        db.session.query(ResolverConfig) \
+            .filter(ResolverConfig.resolver_id == ret) \
+            .delete()
         # delete the Resolver itself
         db.session.delete(self)
         save_config_timestamp()
@@ -1049,9 +1143,9 @@ class ResolverConfig(TimestampMethodsMixin, db.Model):
     resolver_id = db.Column(db.Integer,
                             db.ForeignKey('resolver.id'))
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.Unicode(2000), default=u'')
-    Type = db.Column(db.Unicode(2000), default=u'')
-    Description = db.Column(db.Unicode(2000), default=u'')
+    Value = db.Column(db.Unicode(2000), default='')
+    Type = db.Column(db.Unicode(2000), default='')
+    Description = db.Column(db.Unicode(2000), default='')
     __table_args__ = (db.UniqueConstraint('resolver_id',
                                           'Key',
                                           name='rcix_2'),
@@ -1064,10 +1158,10 @@ class ResolverConfig(TimestampMethodsMixin, db.Model):
         if resolver_id:
             self.resolver_id = resolver_id
         elif resolver:
-            self.resolver_id = Resolver.query\
-                                       .filter_by(name=resolver)\
-                                       .first()\
-                                       .id
+            self.resolver_id = Resolver.query \
+                .filter_by(name=resolver) \
+                .first() \
+                .id
         self.Key = convert_column_to_unicode(Key)
         self.Value = convert_column_to_unicode(Value)
         self.Type = convert_column_to_unicode(Type)
@@ -1107,37 +1201,56 @@ class ResolverRealm(TimestampMethodsMixin, db.Model):
     # If there are several resolvers in a realm, the priority is used the
     # find a user first in a resolver with a higher priority (i.e. lower number)
     priority = db.Column(db.Integer)
+    # TODO: with SQLAlchemy 2.0 db.UUID will be generally available
+    node_uuid = db.Column(db.Unicode(36), default='')
     resolver = db.relationship(Resolver,
                                lazy="joined",
-                               foreign_keys="ResolverRealm.resolver_id")
+                               back_populates="realm_list")
     realm = db.relationship(Realm,
                             lazy="joined",
-                            foreign_keys="ResolverRealm.realm_id")
+                            back_populates="resolver_list")
     __table_args__ = (db.UniqueConstraint('resolver_id',
                                           'realm_id',
+                                          'node_uuid',
                                           name='rrix_2'),
                       {'mysql_row_format': 'DYNAMIC'})
 
     def __init__(self, resolver_id=None, realm_id=None,
                  resolver_name=None,
                  realm_name=None,
-                 priority=None):
+                 priority=None,
+                 node_uuid=None,
+                 node_name=None):
         self.resolver_id = None
         self.realm_id = None
         if priority:
-            self.priority = priority
+            self.priority = int(priority)
         if resolver_id:
             self.resolver_id = resolver_id
         elif resolver_name:
-            self.resolver_id = Resolver.query\
-                                       .filter_by(name=resolver_name)\
-                                       .first().id
+            self.resolver_id = Resolver.query \
+                .filter_by(name=resolver_name) \
+                .first().id
         if realm_id:
             self.realm_id = realm_id
         elif realm_name:
-            self.realm_id = Realm.query\
-                                 .filter_by(name=realm_name)\
-                                 .first().id
+            self.realm_id = Realm.query \
+                .filter_by(name=realm_name) \
+                .first().id
+        if node_uuid:
+            # Check if the node is already defined in the NodeName table
+            if db.session.scalar(db.select(db.func.count(NodeName.id)).filter(NodeName.id == node_uuid)) > 0:
+                self.node_uuid = node_uuid
+            else:
+                # Did not find a NodeName entry, adding a new one only if node_name is set
+                if node_name:
+                    self.node_uuid = NodeName(node_uuid, node_name).save().id
+                else:
+                    raise DatabaseError(f"No NodeName entry found for UUID {node_uuid}")
+
+        elif node_name:
+            # Get the UUID for the corresponding node name
+            self.node_uuid = db.session.scalar(db.select(NodeName).filter(NodeName.name == node_name)).id
 
 
 class TokenOwner(MethodsMixin, db.Model):
@@ -1149,8 +1262,8 @@ class TokenOwner(MethodsMixin, db.Model):
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer(), Sequence("tokenowner_seq"), primary_key=True)
     token_id = db.Column(db.Integer(), db.ForeignKey('token.id'))
-    resolver = db.Column(db.Unicode(120), default=u'', index=True)
-    user_id = db.Column(db.Unicode(320), default=u'', index=True)
+    resolver = db.Column(db.Unicode(120), default='', index=True)
+    user_id = db.Column(db.Unicode(320), default='', index=True)
     realm_id = db.Column(db.Integer(), db.ForeignKey('realm.id'))
     # This creates an attribute "tokenowners" in the realm objects
     realm = db.relationship('Realm', lazy='joined', backref='tokenowners')
@@ -1176,7 +1289,7 @@ class TokenOwner(MethodsMixin, db.Model):
             r = Token.query.filter_by(serial=serial).first()
             self.token_id = r.id
         self.resolver = resolver
-        self. user_id = user_id
+        self.user_id = user_id
 
     def save(self, persistent=True):
         to_func = TokenOwner.query.filter_by(token_id=self.token_id,
@@ -1209,8 +1322,7 @@ class TokenRealm(MethodsMixin, db.Model):
     many additional realms.
     """
     __tablename__ = 'tokenrealm'
-    id = db.Column(db.Integer(), Sequence("tokenrealm_seq"), primary_key=True,
-                   nullable=True)
+    id = db.Column(db.Integer(), Sequence("tokenrealm_seq"), primary_key=True)
     token_id = db.Column(db.Integer(),
                          db.ForeignKey('token.id'))
     realm_id = db.Column(db.Integer(),
@@ -1301,10 +1413,9 @@ class PasswordReset(MethodsMixin, db.Model):
         self.email = email
         self.timestamp = timestamp or datetime.now()
         self.expiration = expiration or datetime.now() + \
-                                        timedelta(seconds=expiration_seconds)
+                          timedelta(seconds=expiration_seconds)
 
 
-@six.python_2_unicode_compatible
 class Challenge(MethodsMixin, db.Model):
     """
     Table for handling of the generic challenges.
@@ -1314,19 +1425,19 @@ class Challenge(MethodsMixin, db.Model):
     id = db.Column(db.Integer(), Sequence("challenge_seq"), primary_key=True,
                    nullable=False)
     transaction_id = db.Column(db.Unicode(64), nullable=False, index=True)
-    data = db.Column(db.Unicode(512), default=u'')
-    challenge = db.Column(db.Unicode(512), default=u'')
-    session = db.Column(db.Unicode(512), default=u'', quote=True, name="session")
+    data = db.Column(db.Unicode(512), default='')
+    challenge = db.Column(db.Unicode(512), default='')
+    session = db.Column(db.Unicode(512), default='', quote=True, name="session")
     # The token serial number
-    serial = db.Column(db.Unicode(40), default=u'', index=True)
+    serial = db.Column(db.Unicode(40), default='', index=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow(), index=True)
-    expiration = db.Column(db.DateTime)
+    expiration = db.Column(db.DateTime, index=True)
     received_count = db.Column(db.Integer(), default=0)
     otp_valid = db.Column(db.Boolean, default=False)
 
     @log_with(log)
     def __init__(self, serial, transaction_id=None,
-                 challenge=u'', data=u'', session=u'', validitytime=120):
+                 challenge='', data='', session='', validitytime=120):
 
         self.transaction_id = transaction_id or self.create_transaction_id()
         self.challenge = challenge
@@ -1381,7 +1492,7 @@ class Challenge(MethodsMixin, db.Model):
 
     def set_challenge(self, challenge):
         self.challenge = convert_column_to_unicode(challenge)
-    
+
     def get_challenge(self):
         return self.challenge
 
@@ -1405,7 +1516,7 @@ class Challenge(MethodsMixin, db.Model):
     def get(self, timestamp=False):
         """
         return a dictionary of all vars in the challenge class
-        
+
         :param timestamp: if true, the timestamp will given in a readable
                           format
                           2014-11-29 21:56:43.057293
@@ -1430,18 +1541,47 @@ class Challenge(MethodsMixin, db.Model):
 
     def __str__(self):
         descr = self.get()
-        return u"{0!s}".format(descr)
+        return "{0!s}".format(descr)
 
 
-def cleanup_challenges():
+def cleanup_challenges(serial):
     """
     Delete all challenges, that have expired.
 
     :return: None
     """
     c_now = datetime.utcnow()
-    Challenge.query.filter(Challenge.expiration < c_now).delete()
+    Challenge.query.filter(Challenge.expiration < c_now, Challenge.serial == serial).delete()
     db.session.commit()
+
+
+# -----------------------------------------------------------------------------
+#
+# DESCRIPTION
+#
+
+
+class PolicyDescription(TimestampMethodsMixin, db.Model):
+    """
+    The description table is used to store the description of policy
+    """
+    __tablename__ = 'description'
+    id = db.Column(db.Integer, Sequence("description_seq"), primary_key=True)
+    object_id = db.Column(db.Integer, db.ForeignKey('policy.id'), nullable=False)
+    object_type = db.Column(db.Unicode(64), unique=False, nullable=False)
+    last_update = db.Column(db.DateTime, default=datetime.utcnow)
+    description = db.Column(db.UnicodeText())
+
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+
+    def __init__(self, object_id, name="", object_type="", description=""):
+
+        self.name = name
+        self.object_type = object_type
+        self.object_id = object_id
+        self.last_update = datetime.now()
+        self.description = description
+
 
 # -----------------------------------------------------------------------------
 #
@@ -1467,18 +1607,19 @@ class Policy(TimestampMethodsMixin, db.Model):
     active = db.Column(db.Boolean, default=True)
     check_all_resolvers = db.Column(db.Boolean, default=False)
     name = db.Column(db.Unicode(64), unique=True, nullable=False)
+    user_case_insensitive = db.Column(db.Boolean, default=False)
     scope = db.Column(db.Unicode(32), nullable=False)
-    action = db.Column(db.Unicode(2000), default=u"")
-    realm = db.Column(db.Unicode(256), default=u"")
-    adminrealm = db.Column(db.Unicode(256), default=u"")
-    adminuser = db.Column(db.Unicode(256), default=u"")
-    resolver = db.Column(db.Unicode(256), default=u"")
-    pinode = db.Column(db.Unicode(256), default=u"")
-    user = db.Column(db.Unicode(256), default=u"")
-    client = db.Column(db.Unicode(256), default=u"")
-    time = db.Column(db.Unicode(64), default=u"")
+    action = db.Column(db.Unicode(2000), default="")
+    realm = db.Column(db.Unicode(256), default="")
+    adminrealm = db.Column(db.Unicode(256), default="")
+    adminuser = db.Column(db.Unicode(256), default="")
+    resolver = db.Column(db.Unicode(256), default="")
+    pinode = db.Column(db.Unicode(256), default="")
+    user = db.Column(db.Unicode(256), default="")
+    client = db.Column(db.Unicode(256), default="")
+    time = db.Column(db.Unicode(64), default="")
     # If there are multiple matching policies, choose the one
-    # with the lowest priority number. We choose 1 to be the default priotity.
+    # with the lowest priority number. We choose 1 to be the default priority.
     priority = db.Column(db.Integer, default=1, nullable=False)
     conditions = db.relationship("PolicyCondition",
                                  lazy="joined",
@@ -1489,14 +1630,18 @@ class Policy(TimestampMethodsMixin, db.Model):
                                  # Likewise, whenever a Policy object is deleted, its conditions are also
                                  # deleted (delete). Conditions without a policy are deleted (delete-orphan).
                                  cascade="save-update, merge, delete, delete-orphan")
-    
+    description = db.relationship('PolicyDescription', backref='policy',
+                                  cascade="save-update, merge, delete, delete-orphan")
+
     def __init__(self, name,
                  active=True, scope="", action="", realm="", adminrealm="", adminuser="",
                  resolver="", user="", client="", time="", pinode="", priority=1,
-                 check_all_resolvers=False, conditions=None):
-        if isinstance(active, six.string_types):
+                 check_all_resolvers=False, conditions=None, user_case_insensitive=False):
+        if isinstance(active, str):
             active = is_true(active.lower())
         self.name = name
+
+        self.user_case_insensitive = user_case_insensitive
         self.action = action
         self.scope = scope
         self.active = active
@@ -1533,6 +1678,16 @@ class Policy(TimestampMethodsMixin, db.Model):
         """
         return [condition.as_tuple() for condition in self.conditions]
 
+    def get_policy_description(self):
+        """
+
+        """
+        if self.description:
+            ret = self.description[0].description
+        else:
+            ret = None
+        return ret
+
     @staticmethod
     def _split_string(value):
         """
@@ -1558,6 +1713,7 @@ class Policy(TimestampMethodsMixin, db.Model):
         :rytpe: dict or value
         """
         d = {"name": self.name,
+             "user_case_insensitive": self.user_case_insensitive,
              "active": self.active,
              "scope": self.scope,
              "realm": self._split_string(self.realm),
@@ -1570,7 +1726,8 @@ class Policy(TimestampMethodsMixin, db.Model):
              "client": self._split_string(self.client),
              "time": self.time,
              "conditions": self.get_conditions_tuples(),
-             "priority": self.priority}
+             "priority": self.priority,
+             "description": self.get_policy_description()}
         action_list = [x.strip().split("=", 1) for x in (self.action or "").split(
             ",")]
         action_dict = {}
@@ -1596,8 +1753,8 @@ class PolicyCondition(MethodsMixin, db.Model):
     # We use upper-case "Key" and "Value" to prevent conflicts with databases
     # that do not support "key" or "value" as column names
     Key = db.Column(db.Unicode(255), nullable=False)
-    comparator = db.Column(db.Unicode(255), nullable=False, default=u'equals')
-    Value = db.Column(db.Unicode(2000), nullable=False, default=u'')
+    comparator = db.Column(db.Unicode(255), nullable=False, default='equals')
+    Value = db.Column(db.Unicode(2000), nullable=False, default='')
     active = db.Column(db.Boolean, nullable=False, default=True)
 
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
@@ -1658,14 +1815,25 @@ class MachineToken(MethodsMixin, db.Model):
         self.machine_id = machine_id
         self.application = application
 
+    def delete(self):
+        ret = self.id
+        db.session.query(MachineTokenOptions) \
+            .filter(MachineTokenOptions.machinetoken_id == self.id) \
+            .delete()
+        db.session.delete(self)
+        save_config_timestamp()
+        db.session.commit()
+        return ret
+
+
 """
 class MachineUser(db.Model):
     '''
     The MachineUser maps a user to a client and
     an application on this client
-    
+
     The tuple of (machine, USER, application) is unique.
-    
+
     This can be an n:m mapping.
     '''
     __tablename__ = "machineuser"
@@ -1673,15 +1841,15 @@ class MachineUser(db.Model):
     resolver = db.Column(db.Unicode(120), default=u'', index=True)
     resclass = db.Column(db.Unicode(120),  default=u'')
     user_id = db.Column(db.Unicode(120), default=u'', index=True)
-    machine_id = db.Column(db.Integer(), 
+    machine_id = db.Column(db.Integer(),
                            db.ForeignKey('clientmachine.id'))
     application = db.Column(db.Unicode(64))
-    
+
     __table_args__ = (db.UniqueConstraint('resolver', 'resclass',
                                           'user_id', 'machine_id',
                                           'application', name='uixu_1'),
                       {})
-    
+
     @log_with(log)
     def __init__(self, machine_id,
                  resolver,
@@ -1694,13 +1862,13 @@ class MachineUser(db.Model):
         self.resclass = resclass
         self.user_id = user_id
         self.application = application
-        
+
     @log_with(log)
     def store(self):
         db.session.add(self)
         db.session.commit()
         return True
-    
+
     def to_json(self):
         machinename = ""
         ip = ""
@@ -1741,8 +1909,8 @@ class MachineTokenOptions(db.Model):
 
     def __init__(self, machinetoken_id, key, value):
         log.debug("setting {0!r} to {1!r} for MachineToken {2!s}".format(key,
-                                                            value,
-                                                            machinetoken_id))
+                                                                         value,
+                                                                         machinetoken_id))
         self.machinetoken_id = machinetoken_id
         self.mt_key = convert_column_to_unicode(key)
         self.mt_value = convert_column_to_unicode(value)
@@ -1776,7 +1944,7 @@ class MachineUserOptions(db.Model):
     machineuser_id = db.Column(db.Integer(), db.ForeignKey('machineuser.id'))
     mu_key = db.Column(db.Unicode(64), nullable=False)
     mu_value = db.Column(db.Unicode(64), nullable=False)
-    
+
     def __init__(self, machineuser_id, key, value):
         log.debug("setting %r to %r for MachineUser %s" % (key,
                                                            value,
@@ -1804,13 +1972,13 @@ class EventHandler(MethodsMixin, db.Model):
     name = db.Column(db.Unicode(64), unique=False, nullable=True)
     active = db.Column(db.Boolean, default=True)
     ordering = db.Column(db.Integer, nullable=False, default=0)
-    position = db.Column(db.Unicode(10), default=u"post")
+    position = db.Column(db.Unicode(10), default="post")
     # This is the name of the event in the code
     event = db.Column(db.Unicode(255), nullable=False)
     # This is the identifier of an event handler module
     handlermodule = db.Column(db.Unicode(255), nullable=False)
-    condition = db.Column(db.Unicode(1024), default=u"")
-    action = db.Column(db.Unicode(1024), default=u"")
+    condition = db.Column(db.Unicode(1024), default="")
+    action = db.Column(db.Unicode(1024), default="")
     # This creates an attribute "eventhandler" in the EventHandlerOption object
     options = db.relationship('EventHandlerOption',
                               lazy='dynamic',
@@ -1926,8 +2094,8 @@ class EventHandlerCondition(db.Model):
     eventhandler_id = db.Column(db.Integer,
                                 db.ForeignKey('eventhandler.id'))
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.Unicode(2000), default=u'')
-    comparator = db.Column(db.Unicode(255), default=u'equal')
+    Value = db.Column(db.Unicode(2000), default='')
+    comparator = db.Column(db.Unicode(255), default='equal')
     __table_args__ = (db.UniqueConstraint('eventhandler_id',
                                           'Key',
                                           name='ehcix_1'),
@@ -1970,9 +2138,9 @@ class EventHandlerOption(db.Model):
     eventhandler_id = db.Column(db.Integer,
                                 db.ForeignKey('eventhandler.id'))
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.Unicode(2000), default=u'')
-    Type = db.Column(db.Unicode(2000), default=u'')
-    Description = db.Column(db.Unicode(2000), default=u'')
+    Value = db.Column(db.Unicode(2000), default='')
+    Type = db.Column(db.Unicode(2000), default='')
+    Description = db.Column(db.Unicode(2000), default='')
     __table_args__ = (db.UniqueConstraint('eventhandler_id',
                                           'Key',
                                           name='ehoix_1'),
@@ -2019,9 +2187,9 @@ class MachineResolver(MethodsMixin, db.Model):
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer, Sequence("machineresolver_seq"),
                    primary_key=True, nullable=False)
-    name = db.Column(db.Unicode(255), default=u"",
+    name = db.Column(db.Unicode(255), default="",
                      unique=True, nullable=False)
-    rtype = db.Column(db.Unicode(255), default=u"",
+    rtype = db.Column(db.Unicode(255), default="",
                       nullable=False)
     rconfig = db.relationship('MachineResolverConfig',
                               lazy='dynamic',
@@ -2034,9 +2202,9 @@ class MachineResolver(MethodsMixin, db.Model):
     def delete(self):
         ret = self.id
         # delete all MachineResolverConfig
-        db.session.query(MachineResolverConfig)\
-                  .filter(MachineResolverConfig.resolver_id == ret)\
-                  .delete()
+        db.session.query(MachineResolverConfig) \
+            .filter(MachineResolverConfig.resolver_id == ret) \
+            .delete()
         # delete the MachineResolver itself
         db.session.delete(self)
         db.session.commit()
@@ -2054,9 +2222,9 @@ class MachineResolverConfig(db.Model):
     resolver_id = db.Column(db.Integer,
                             db.ForeignKey('machineresolver.id'))
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.Unicode(2000), default=u'')
-    Type = db.Column(db.Unicode(2000), default=u'')
-    Description = db.Column(db.Unicode(2000), default=u'')
+    Value = db.Column(db.Unicode(2000), default='')
+    Type = db.Column(db.Unicode(2000), default='')
+    Description = db.Column(db.Unicode(2000), default='')
     __table_args__ = (db.UniqueConstraint('resolver_id',
                                           'Key',
                                           name='mrcix_2'),
@@ -2067,10 +2235,10 @@ class MachineResolverConfig(db.Model):
         if resolver_id:
             self.resolver_id = resolver_id
         elif resolver:
-            self.resolver_id = MachineResolver.query\
-                                .filter_by(name=resolver)\
-                                .first()\
-                                .id
+            self.resolver_id = MachineResolver.query \
+                .filter_by(name=resolver) \
+                .first() \
+                .id
         self.Key = Key
         self.Value = convert_column_to_unicode(Value)
         self.Type = Type
@@ -2087,7 +2255,7 @@ class MachineResolverConfig(db.Model):
         else:
             # update
             MachineResolverConfig.query.filter_by(
-                resolver_id=self.resolver_id, Key=self.Key)\
+                resolver_id=self.resolver_id, Key=self.Key) \
                 .update({'Value': self.Value,
                          'Type': self.Type,
                          'Description': self.Description})
@@ -2168,7 +2336,7 @@ class SMSGateway(MethodsMixin, db.Model):
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer, Sequence("smsgateway_seq"), primary_key=True)
     identifier = db.Column(db.Unicode(255), nullable=False, unique=True)
-    description = db.Column(db.Unicode(1024), default=u"")
+    description = db.Column(db.Unicode(1024), default="")
     providermodule = db.Column(db.Unicode(1024), nullable=False)
     options = db.relationship('SMSGatewayOption',
                               lazy='dynamic',
@@ -2224,9 +2392,9 @@ class SMSGateway(MethodsMixin, db.Model):
         """
         ret = self.id
         # delete all SMSGatewayOptions
-        db.session.query(SMSGatewayOption)\
-                  .filter(SMSGatewayOption.gateway_id == ret)\
-                  .delete()
+        db.session.query(SMSGatewayOption) \
+            .filter(SMSGatewayOption.gateway_id == ret) \
+            .delete()
         # delete the SMSGateway itself
         db.session.delete(self)
         db.session.commit()
@@ -2282,8 +2450,8 @@ class SMSGatewayOption(MethodsMixin, db.Model):
     __tablename__ = 'smsgatewayoption'
     id = db.Column(db.Integer, Sequence("smsgwoption_seq"), primary_key=True)
     Key = db.Column(db.Unicode(255), nullable=False)
-    Value = db.Column(db.UnicodeText(), default=u'')
-    Type = db.Column(db.Unicode(100), default=u'option')
+    Value = db.Column(db.UnicodeText(), default='')
+    Type = db.Column(db.Unicode(100), default='option')
     gateway_id = db.Column(db.Integer(),
                            db.ForeignKey('smsgateway.id'), index=True)
     __table_args__ = (db.UniqueConstraint('gateway_id',
@@ -2306,7 +2474,7 @@ class SMSGatewayOption(MethodsMixin, db.Model):
         # See, if there is this option or header for this this gateway
         # The first match takes precedence
         go = SMSGatewayOption.query.filter_by(gateway_id=self.gateway_id,
-                                               Key=self.Key, Type=self.Type).first()
+                                              Key=self.Key, Type=self.Type).first()
         if go is None:
             # create a new one
             db.session.add(self)
@@ -2315,9 +2483,9 @@ class SMSGatewayOption(MethodsMixin, db.Model):
         else:
             # update
             SMSGatewayOption.query.filter_by(gateway_id=self.gateway_id,
-                                              Key=self.Key, Type=self.Type
-                                              ).update({'Value': self.Value,
-                                                        'Type': self.Type})
+                                             Key=self.Key, Type=self.Type
+                                             ).update({'Value': self.Value,
+                                                       'Type': self.Type})
             ret = go.id
         db.session.commit()
         return ret
@@ -2336,7 +2504,7 @@ class PrivacyIDEAServer(MethodsMixin, db.Model):
     # This is the FQDN or the IP address
     url = db.Column(db.Unicode(255), nullable=False)
     tls = db.Column(db.Boolean, default=False)
-    description = db.Column(db.Unicode(2000), default=u'')
+    description = db.Column(db.Unicode(2000), default='')
 
     def save(self):
         pi = PrivacyIDEAServer.query.filter(PrivacyIDEAServer.identifier ==
@@ -2385,10 +2553,10 @@ class RADIUSServer(MethodsMixin, db.Model):
     # This is the FQDN or the IP address
     server = db.Column(db.Unicode(255), nullable=False)
     port = db.Column(db.Integer, default=25)
-    secret = db.Column(db.Unicode(255), default=u"")
+    secret = db.Column(db.Unicode(255), default="")
     dictionary = db.Column(db.Unicode(255),
-                           default=u"/etc/privacyidea/dictionary")
-    description = db.Column(db.Unicode(2000), default=u'')
+                           default="/etc/privacyidea/dictionary")
+    description = db.Column(db.Unicode(2000), default='')
     timeout = db.Column(db.Integer, default=5)
     retries = db.Column(db.Integer, default=3)
 
@@ -2431,23 +2599,23 @@ class SMTPServer(MethodsMixin, db.Model):
     This table can store configurations for SMTP servers.
     Each entry represents an SMTP server.
     EMail Token, SMS SMTP Gateways or Notifications like PIN handlers are
-    supposed to use a reference to to a server definition.
+    supposed to use a reference to a server definition.
     Each Machine Resolver can have multiple configuration entries.
     The config entries are referenced by the id of the machine resolver
     """
     __tablename__ = 'smtpserver'
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
-    id = db.Column(db.Integer, Sequence("smtpserver_seq"),primary_key=True)
+    id = db.Column(db.Integer, Sequence("smtpserver_seq"), primary_key=True)
     # This is a name to refer to
     identifier = db.Column(db.Unicode(255), nullable=False)
     # This is the FQDN or the IP address
     server = db.Column(db.Unicode(255), nullable=False)
     port = db.Column(db.Integer, default=25)
-    username = db.Column(db.Unicode(255), default=u"")
-    password = db.Column(db.Unicode(255), default=u"")
-    sender = db.Column(db.Unicode(255), default=u"")
+    username = db.Column(db.Unicode(255), default="")
+    password = db.Column(db.Unicode(255), default="")
+    sender = db.Column(db.Unicode(255), default="")
     tls = db.Column(db.Boolean, default=False)
-    description = db.Column(db.Unicode(2000), default=u'')
+    description = db.Column(db.Unicode(2000), default='')
     timeout = db.Column(db.Integer, default=10)
     enqueue_job = db.Column(db.Boolean, nullable=False, default=False)
 
@@ -2537,7 +2705,11 @@ class ClientApplication(MethodsMixin, db.Model):
             if self.hostname is not None:
                 values["hostname"] = self.hostname
             ClientApplication.query.filter(ClientApplication.id == clientapp.id).update(values)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError as e:  # pragma: no cover
+            log.info('Unable to write ClientApplication entry to db: {0!s}'.format(e))
+            log.debug(traceback.format_exc())
 
     def __repr__(self):
         return "<ClientApplication [{0!s}][{1!s}:{2!s}] on {3!s}>".format(
@@ -2675,7 +2847,13 @@ audit_column_length = {"signature": 620,
                        "client": 50,
                        "loglevel": 12,
                        "clearance_level": 12,
-                       "policies": 255}
+                       "thread_id": 20,
+                       "authentication": 12,
+                       "user_agent": 20,
+                       "user_agent_version": 20,
+                       "policies": 255,
+                       "container_serial": 20,
+                       "container_type": 20}
 AUDIT_TABLE_NAME = 'pidea_audit'
 
 
@@ -2692,8 +2870,11 @@ class Audit(MethodsMixin, db.Model):
     signature = db.Column(db.Unicode(audit_column_length.get("signature")))
     action = db.Column(db.Unicode(audit_column_length.get("action")))
     success = db.Column(db.Integer)
+    authentication = db.Column(db.Unicode(audit_column_length.get("authentication")))
     serial = db.Column(db.Unicode(audit_column_length.get("serial")))
     token_type = db.Column(db.Unicode(audit_column_length.get("token_type")))
+    container_serial = db.Column(db.Unicode(audit_column_length.get("container_serial")))
+    container_type = db.Column(db.Unicode(audit_column_length.get("container_type")))
     user = db.Column(db.Unicode(audit_column_length.get("user")), index=True)
     realm = db.Column(db.Unicode(audit_column_length.get("realm")))
     resolver = db.Column(db.Unicode(audit_column_length.get("resolver")))
@@ -2705,16 +2886,22 @@ class Audit(MethodsMixin, db.Model):
     privacyidea_server = db.Column(
         db.Unicode(audit_column_length.get("privacyidea_server")))
     client = db.Column(db.Unicode(audit_column_length.get("client")))
+    user_agent = db.Column(db.Unicode(audit_column_length.get("user_agent")))
+    user_agent_version = db.Column(db.Unicode(audit_column_length.get("user_agent_version")))
     loglevel = db.Column(db.Unicode(audit_column_length.get("loglevel")))
     clearance_level = db.Column(db.Unicode(audit_column_length.get(
         "clearance_level")))
+    thread_id = db.Column(db.Unicode(audit_column_length.get("thread_id")))
     policies = db.Column(db.Unicode(audit_column_length.get("policies")))
 
     def __init__(self,
                  action="",
                  success=0,
+                 authentication="",
                  serial="",
                  token_type="",
+                 container_serial="",
+                 container_type="",
                  user="",
                  realm="",
                  resolver="",
@@ -2723,8 +2910,11 @@ class Audit(MethodsMixin, db.Model):
                  info="",
                  privacyidea_server="",
                  client="",
+                 user_agent="",
+                 user_agent_version="",
                  loglevel="default",
                  clearance_level="default",
+                 thread_id="0",
                  policies="",
                  startdate=None,
                  duration=None
@@ -2735,8 +2925,11 @@ class Audit(MethodsMixin, db.Model):
         self.duration = duration
         self.action = convert_column_to_unicode(action)
         self.success = success
+        self.authentication = convert_column_to_unicode(authentication)
         self.serial = convert_column_to_unicode(serial)
         self.token_type = convert_column_to_unicode(token_type)
+        self.container_serial = convert_column_to_unicode(container_serial)
+        self.container_type = convert_column_to_unicode(container_type)
         self.user = convert_column_to_unicode(user)
         self.realm = convert_column_to_unicode(realm)
         self.resolver = convert_column_to_unicode(resolver)
@@ -2747,7 +2940,10 @@ class Audit(MethodsMixin, db.Model):
         self.client = convert_column_to_unicode(client)
         self.loglevel = convert_column_to_unicode(loglevel)
         self.clearance_level = convert_column_to_unicode(clearance_level)
+        self.thread_id = convert_column_to_unicode(thread_id)
         self.policies = convert_column_to_unicode(policies)
+        self.user_agent = convert_column_to_unicode(user_agent)
+        self.user_agent_version = convert_column_to_unicode(user_agent_version)
 
 
 ### User Cache
@@ -2756,10 +2952,10 @@ class UserCache(MethodsMixin, db.Model):
     __tablename__ = 'usercache'
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
     id = db.Column(db.Integer, Sequence("usercache_seq"), primary_key=True)
-    username = db.Column(db.Unicode(64), default=u"", index=True)
-    used_login = db.Column(db.Unicode(64), default=u"", index=True)
-    resolver = db.Column(db.Unicode(120), default=u'')
-    user_id = db.Column(db.Unicode(320), default=u'', index=True)
+    username = db.Column(db.Unicode(64), default="", index=True)
+    used_login = db.Column(db.Unicode(64), default="", index=True)
+    resolver = db.Column(db.Unicode(120), default='')
+    user_id = db.Column(db.Unicode(320), default='', index=True)
     timestamp = db.Column(db.DateTime, index=True)
 
     def __init__(self, username, used_login, resolver, user_id, timestamp):
@@ -2773,18 +2969,18 @@ class UserCache(MethodsMixin, db.Model):
 class AuthCache(MethodsMixin, db.Model):
     __tablename__ = 'authcache'
     __table_args__ = {'mysql_row_format': 'DYNAMIC'}
-    id = db.Column(db.Integer, Sequence("usercache_seq"), primary_key=True)
+    id = db.Column(db.Integer, Sequence("authcache_seq"), primary_key=True)
     first_auth = db.Column(db.DateTime, index=True)
     last_auth = db.Column(db.DateTime, index=True)
-    username = db.Column(db.Unicode(64), default=u"", index=True)
-    resolver = db.Column(db.Unicode(120), default=u'', index=True)
-    realm = db.Column(db.Unicode(120), default=u'', index=True)
-    client_ip = db.Column(db.Unicode(40), default=u"")
-    user_agent = db.Column(db.Unicode(120), default=u"")
+    username = db.Column(db.Unicode(64), default="", index=True)
+    resolver = db.Column(db.Unicode(120), default='', index=True)
+    realm = db.Column(db.Unicode(120), default='', index=True)
+    client_ip = db.Column(db.Unicode(40), default="")
+    user_agent = db.Column(db.Unicode(120), default="")
     auth_count = db.Column(db.Integer, default=0)
     # We can hash the password like this:
     # binascii.hexlify(hashlib.sha256("secret123456").digest())
-    authentication = db.Column(db.Unicode(255), default=u"")
+    authentication = db.Column(db.Unicode(255), default="")
 
     def __init__(self, username, realm, resolver, authentication,
                  first_auth=None, last_auth=None):
@@ -2842,7 +3038,7 @@ class PeriodicTask(MethodsMixin, db.Model):
         self.active = active
         self.retry_if_failed = retry_if_failed
         self.interval = interval
-        self.nodes = u", ".join(node_list)
+        self.nodes = ", ".join(node_list)
         self.taskmodule = taskmodule
         self.ordering = ordering
         self.save()
@@ -2942,7 +3138,7 @@ class PeriodicTaskOption(db.Model):
                    primary_key=True)
     periodictask_id = db.Column(db.Integer, db.ForeignKey('periodictask.id'))
     key = db.Column(db.Unicode(255), nullable=False)
-    value = db.Column(db.Unicode(2000), default=u'')
+    value = db.Column(db.Unicode(2000), default='')
 
     __table_args__ = (db.UniqueConstraint('periodictask_id',
                                           'key',
@@ -3067,5 +3263,345 @@ class MonitoringStats(MethodsMixin, db.Model):
         self.timestamp = timestamp
         self.stats_key = key
         self.stats_value = value
-        #self.save()
+        # self.save()
 
+
+class Serviceid(TimestampMethodsMixin, db.Model):
+    """
+    The serviceid table contains the defined service IDs. These service ID
+    describe services like "webservers" or "dbservers" which e.g. request SSH keys
+    from the privacyIDEA system.
+    """
+    __tablename__ = 'serviceid'
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+    id = db.Column(db.Integer, Sequence("serviceid_seq"), primary_key=True,
+                   nullable=False)
+    name = db.Column(db.Unicode(255), default='',
+                     unique=True, nullable=False)
+    Description = db.Column(db.Unicode(2000), default='')
+
+    @log_with(log)
+    def __init__(self, servicename, description=None):
+        self.name = servicename
+        self.Description = description
+
+    def save(self):
+        si = Serviceid.query.filter_by(name=self.name).first()
+        if si is None:
+            return TimestampMethodsMixin.save(self)
+        else:
+            # update
+            Serviceid.query.filter_by(id=si.id).update({'Description': self.Description})
+            ret = si.id
+            db.session.commit()
+        return ret
+
+
+class Tokengroup(TimestampMethodsMixin, db.Model):
+    """
+    The tokengroup table contains the definition of available token groups.
+    A token can then be assigned to several of these tokengroups.
+    """
+    __tablename__ = 'tokengroup'
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+    id = db.Column(db.Integer, Sequence("tokengroup_seq"), primary_key=True,
+                   nullable=False)
+    name = db.Column(db.Unicode(255), default='',
+                     unique=True, nullable=False)
+    Description = db.Column(db.Unicode(2000), default='')
+
+    @log_with(log)
+    def __init__(self, groupname, description=None):
+        self.name = groupname
+        self.Description = description
+
+    def delete(self):
+        ret = self.id
+        # delete all TokenTokenGroup
+        db.session.query(TokenTokengroup) \
+            .filter(TokenTokengroup.tokengroup_id == ret) \
+            .delete()
+        # delete the tokengroup
+        db.session.delete(self)
+        save_config_timestamp()
+        db.session.commit()
+        return ret
+
+    def save(self):
+        ti_func = Tokengroup.query.filter_by(name=self.name).first
+        ti = ti_func()
+        if ti is None:
+            return TimestampMethodsMixin.save(self)
+        else:
+            # update
+            Tokengroup.query.filter_by(id=ti.id).update({'Description': self.Description})
+            ret = ti.id
+            db.session.commit()
+        return ret
+
+
+class TokenTokengroup(TimestampMethodsMixin, db.Model):
+    """
+    This table stores the assignment of tokens to tokengroups.
+    A token can be assigned to several different token groups.
+    """
+    __tablename__ = 'tokentokengroup'
+    __table_args__ = (db.UniqueConstraint('token_id',
+                                          'tokengroup_id',
+                                          name='ttgix_2'),
+                      {'mysql_row_format': 'DYNAMIC'})
+    id = db.Column(db.Integer(), Sequence("tokentokengroup_seq"), primary_key=True)
+    token_id = db.Column(db.Integer(),
+                         db.ForeignKey('token.id'))
+    tokengroup_id = db.Column(db.Integer(),
+                              db.ForeignKey('tokengroup.id'))
+    # This creates an attribute "tokengroup_list" in the Token object
+    token = db.relationship('Token',
+                            lazy='joined',
+                            backref='tokengroup_list')
+    # This creates an attribute "token_list" in the Tokengroup object
+    tokengroup = db.relationship('Tokengroup',
+                                 lazy='joined',
+                                 backref='token_list')
+
+    def __init__(self, tokengroup_id=0, token_id=0, tokengroupname=None):
+        """
+        Create a new TokenTokengroup assignment
+        :param tokengroup_id: The id of the token group
+        :param tokengroupname: the name of the tokengroup
+        :param token_id: The id of the token
+        """
+        if tokengroupname:
+            r = Tokengroup.query.filter_by(name=tokengroupname).first()
+            if not r:
+                raise Exception("tokengroup does not exist")
+            self.tokengroup_id = r.id
+        if tokengroup_id:
+            self.tokengroup_id = tokengroup_id
+        self.token_id = token_id
+
+    def save(self):
+        """
+        We only save this, if it does not exist, yet.
+        """
+        tr_func = TokenTokengroup.query.filter_by(tokengroup_id=self.tokengroup_id,
+                                                  token_id=self.token_id).first
+        tr = tr_func()
+        if tr is None:
+            # create a new one
+            db.session.add(self)
+            db.session.commit()
+            if get_app_config_value(SAFE_STORE, False):
+                tr = tr_func()
+                ret = tr.id
+            else:
+                ret = self.id
+        else:
+            ret = self.id
+        return ret
+
+
+class TokenContainer(MethodsMixin, db.Model):
+    """
+    The "Tokencontainer" table contains the containers and their associated tokens.
+    """
+
+    __tablename__ = 'tokencontainer'
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+    id = db.Column("id", db.Integer, db.Identity(), primary_key=True)
+    type = db.Column(db.Unicode(100), default='Generic', nullable=False)
+    description = db.Column(db.Unicode(1024), default='')
+    tokens = db.relationship('Token', secondary='tokencontainertoken', back_populates='container')
+    serial = db.Column(db.Unicode(40), default='', unique=True, nullable=False, index=True)
+    owners = db.relationship('TokenContainerOwner', lazy='dynamic', back_populates='container',
+                             cascade="all, delete-orphan")
+    last_seen = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    last_updated = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    states = db.relationship('TokenContainerStates', lazy='dynamic', back_populates='container',
+                             cascade="all, delete-orphan")
+    info_list = db.relationship('TokenContainerInfo', lazy='select', back_populates='container',
+                                cascade="all, delete-orphan")
+    realms = db.relationship('Realm', secondary='tokencontainerrealm', back_populates='container')
+
+    def __init__(self, serial, container_type="Generic", tokens=None, description="", states=None):
+        self.serial = serial
+        self.type = container_type
+        self.description = description
+        if tokens:
+            self.tokens = [t.token for t in tokens]
+        if states:
+            self.states = states
+
+    def set_info(self, info):
+        """
+        Set the additional container info for this container
+
+        Entries that end with ".type" are used as type for the keys.
+        I.e. two entries sshkey="XYZ" and sshkey.type="password" will store
+        the key sshkey as type "password".
+
+        :param info: The key-values to set for this container
+        :type info: dict
+        """
+        if not self.id:
+            # If there is no ID to reference the container, we need to save the
+            # container
+            self.save()
+        types = {}
+        for k, v in info.items():
+            if k and k.endswith(".type"):
+                types[".".join(k.split(".")[:-1])] = v
+        for k, v in info.items():
+            if k and not k.endswith(".type"):
+                TokenContainerInfo(self.id, k, v,
+                                   type=types.get(k)).save(persistent=False)
+        db.session.commit()
+
+
+class TokenContainerOwner(MethodsMixin, db.Model):
+    __tablename__ = 'tokencontainerowner'
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+    id = db.Column("id", db.Integer, db.Identity(), primary_key=True)
+    container_id = db.Column(db.Integer(), db.ForeignKey("tokencontainer.id"))
+    container = db.relationship('TokenContainer', back_populates='owners')
+    resolver = db.Column(db.Unicode(120), default='', index=True)
+    user_id = db.Column(db.Unicode(320), default='', index=True)
+    realm_id = db.Column(db.Integer(), db.ForeignKey('realm.id'))
+    realm = db.relationship('Realm', lazy='joined', backref='tokencontainerowners')
+
+    def __init__(self, container_id=None, container_serial=None, resolver=None, user_id=None, realm_id=None,
+                 realm_name=None):
+        """
+        Create a new TokenContainerOwner assignment.
+
+        :param container_id:
+        :param container_serial: alternative to container_id
+        :param resolver:
+        :param user_id:
+        :param realm_id:
+        :param realm_name: alternative to realm_id
+        """
+        if realm_id is not None:
+            self.realm_id = realm_id
+        elif realm_name:
+            realm = Realm.query.filter_by(name=realm_name).first()
+            self.realm_id = realm.id
+        if container_id is not None:
+            self.container_id = container_id
+        elif container_serial:
+            container = TokenContainer.query.filter_by(serial=container_serial).first()
+            self.container_id = container.id
+        self.resolver = resolver
+        self.user_id = user_id
+
+    def save(self, persistent=True):
+        to_func = TokenContainerOwner.query.filter_by(container_id=self.container_id,
+                                                      user_id=self.user_id,
+                                                      realm_id=self.realm_id,
+                                                      resolver=self.resolver).first
+        to = to_func()
+        if to is None:
+            # This very assignment does not exist, yet:
+            db.session.add(self)
+            db.session.commit()
+            if get_app_config_value(SAFE_STORE, False):
+                to = to_func()
+                ret = to.id
+            else:
+                ret = self.id
+        else:
+            ret = to.id
+            # There is nothing to update
+
+        if persistent:
+            db.session.commit()
+        return ret
+
+
+class TokenContainerStates(MethodsMixin, db.Model):
+    __tablename__ = 'tokencontainerstates'
+    __table_args__ = {'mysql_row_format': 'DYNAMIC'}
+    id = db.Column("id", db.Integer, db.Identity(), primary_key=True)
+    container_id = db.Column(db.Integer(), db.ForeignKey("tokencontainer.id"))
+    container = db.relationship("TokenContainer", back_populates="states")
+    state = db.Column(db.Unicode(100), default='active', nullable=False)
+
+    """
+    The table "tokencontainerstates" is used to store the states of the container. A container can be in several states.
+    """
+
+    def __init__(self, container_id=None, state="active"):
+        self.container_id = container_id
+        self.state = state
+
+
+class TokenContainerInfo(MethodsMixin, db.Model):
+    """
+    The table "tokencontainerinfo" is used to store additional, long information that
+    is specific to the containertype.
+
+    The tokencontainerinfo is reference by the foreign key to the "tokencontainer" table.
+    """
+    __tablename__ = 'tokencontainerinfo'
+    id = db.Column(db.Integer, db.Identity(), primary_key=True)
+    key = db.Column(db.Unicode(255), nullable=False)
+    value = db.Column(db.UnicodeText(), default='')
+    type = db.Column(db.Unicode(100), default='')
+    description = db.Column(db.Unicode(2000), default='')
+    container_id = db.Column(db.Integer(),
+                             db.ForeignKey('tokencontainer.id'), index=True)
+    container = db.relationship('TokenContainer', back_populates='info_list')
+    __table_args__ = (db.UniqueConstraint('container_id',
+                                          'key',
+                                          name='container_id_constraint'),
+                      {'mysql_row_format': 'DYNAMIC'})
+
+    def __init__(self, container_id, key, value,
+                 type=None,
+                 description=None):
+        """
+        Create a new tokencontainerinfo for a given token_id
+        """
+        self.container_id = container_id
+        self.key = key
+        self.value = convert_column_to_unicode(value)
+        self.type = type
+        self.description = description
+
+    def save(self, persistent=True):
+        ti_func = TokenContainerInfo.query.filter_by(container_id=self.container_id,
+                                                     key=self.key).first
+        ti = ti_func()
+        if ti is None:
+            # create a new one
+            db.session.add(self)
+            db.session.commit()
+            if get_app_config_value(SAFE_STORE, False):
+                ti = ti_func()
+                ret = ti.id
+            else:
+                ret = self.id
+        else:
+            # update
+            TokenContainerInfo.query.filter_by(container_id=self.container_id,
+                                               key=self.key).update({'value': self.value,
+                                                                     'description': self.description,
+                                                                     'type': self.type})
+            ret = ti.id
+        if persistent:
+            db.session.commit()
+        return ret
+
+
+class TokenContainerRealm(MethodsMixin, db.Model):
+    """
+    This table stores to which realms a container is assigned. A container is in the
+    realm of the user it is assigned to. But a container can also be put into
+    many additional realms.
+    """
+    __tablename__ = 'tokencontainerrealm'
+    container_id = db.Column(db.Integer(), db.ForeignKey("tokencontainer.id"), primary_key=True)
+    realm_id = db.Column(db.Integer(), db.ForeignKey('realm.id'), primary_key=True)
+
+    __table_args__ = (db.UniqueConstraint('container_id', 'realm_id'),
+                      {'mysql_row_format': 'DYNAMIC'})

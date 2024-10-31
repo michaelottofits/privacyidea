@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2019-07-02 Friedrich Weber <friedrich.weber@netknights.it>
 #             Add a central module for comparing two values
 #
@@ -29,7 +27,7 @@ In order to add a new comparator:
 import csv
 import logging
 import re
-from six import wraps
+from functools import wraps
 
 from privacyidea.lib.framework import _
 
@@ -45,7 +43,7 @@ class CompareError(Exception):
         self.message = message
 
     def __repr__(self):
-        return u"CompareError({!r})".format(self.message)
+        return "CompareError({!r})".format(self.message)
 
 
 def parse_comma_separated_string(input_string):
@@ -62,7 +60,7 @@ def parse_comma_separated_string(input_string):
         reader = csv.reader([input_string], strict=True, skipinitialspace=True, doublequote=False, escapechar="\\")
         rows = list(reader)
     except csv.Error as exx:
-        raise CompareError(u"Malformed comma-separated value: {!r}".format(input_string, exx))
+        raise CompareError("Malformed comma-separated value: {!r}".format(input_string, exx))
     return rows[0]
 
 
@@ -98,7 +96,7 @@ def _compare_contains(left, comparator, right):
     if isinstance(left, list):
         return right in left
     else:
-        raise CompareError(u"Left value must be a list, not {!r}".format(type(left)))
+        raise CompareError("Left value must be a list, not {!r}".format(type(left)))
 
 
 def _compare_matches(left, comparator, right):
@@ -119,7 +117,7 @@ def _compare_matches(left, comparator, right):
             regex = r"^" + right + r"$"
         return re.match(regex, left) is not None
     except re.error as e:
-        raise CompareError(u"Error during matching: {!r}".format(e))
+        raise CompareError("Error during matching: {!r}".format(e))
 
 
 def _compare_in(left, comparator, right):
@@ -217,4 +215,4 @@ def compare_values(left, comparator, right):
     if comparator in COMPARATOR_FUNCTIONS:
         return COMPARATOR_FUNCTIONS[comparator](left, comparator, right)
     else:
-        raise CompareError(u"Invalid comparator: {!r}".format(comparator))
+        raise CompareError("Invalid comparator: {!r}".format(comparator))

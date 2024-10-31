@@ -16,7 +16,7 @@ REST API :ref:`rest_token` and specially the *init* and *assign*-methods.
 
 Technically the decorators in :ref:`code_api_policy` are used.
 
-The following actions are available in the scope 
+The following actions are available in the scope
 *enrollment*:
 
 max_token_per_realm
@@ -72,12 +72,12 @@ tokenissuer
 
 type: string
 
-This sets the issuer label for a newly enrolled Google Authenticator.
+This sets the issuer label for a newly enrolled Smartphone token.
 This policy takes a fixed string, to add additional information about the
 issuer of the soft token.
 
-Starting with version 2.20 you can use the tags ``{user}``, ``{realm}``, ``{serial}``
-and as new tags ``{givenname}`` and ``{surname}`` in the field issuer.
+You can use the tags ``{user}``, ``{realm}``, ``{serial}``, ``{givenname}``
+and ``{surname}`` in the issuer label.
 
 .. note:: A good idea is to set this to the instance name of your privacyIDEA
    installation or the name of your company.
@@ -87,23 +87,19 @@ tokenlabel
 
 type: string
 
-This sets the label for a newly enrolled Google Authenticator.
-Possible tags to be replaces are <u> for user, <r> for realm an
-<s> for the serial number.
+This sets the label for a newly enrolled Smartphone token.
+Possible tags to be replaced are ``{user}``, ``{realm}``, ``{serial}``,
+``{givenname}`` and ``{surname}``.
 
 The default behaviour is to use the serial number.
 
 .. note:: This is useful to identify the token in the Authenticator App.
 
-.. note:: Starting with version 2.19 the usage of ``<u>``, ``<s>`` and ``<r>``
-   is deprecated. Instead you should use ``{user}``, ``{realm}``,
-   ``{serial}`` and as new tags ``{givenname}`` and ``{surname}``.
-
-.. warning:: If you are only using ``<u>`` or ``{user}`` as tokenlabel and you
+.. warning:: If you are only using ``{user}`` as tokenlabel and you
    enroll the token without a user, this will result in an invalid QR code,
    since it will have an empty label.
-   You should rather use a label like "{user}@{realm}",
-   which would result in "@".
+   You should rather use a label like ``"{user}@{realm}"``,
+   which would result in ``"@"``.
 
 appimageurl
 ~~~~~~~~~~~
@@ -273,7 +269,7 @@ losttoken_PW_length
 type: int
 
 This is the length of the generated password for the lost token process.
- 
+
 losttoken_PW_contents
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -303,7 +299,7 @@ losttoken_valid
 
 type: int
 
-This is how many days the replacement token for the lost token should 
+This is how many days the replacement token for the lost token should
 be valid. After this many days the replacement can not be used anymore.
 
 yubikey_access_code
@@ -349,7 +345,7 @@ u2f_req
 type: string
 
 Only the specified U2F devices are allowed to be registered.
-The action can be specified like this:
+The action can be specified like this::
 
     u2f_req=subject/.*Yubico.*/
 
@@ -372,14 +368,20 @@ If you do not want to verify the validity period, you can check this action.
 
 
 .. _2step_parameters:
+.. _hotp-2step-clientsize:
+.. _totp-2step-clientsize:
+.. _hotp-2step-serversize:
+.. _totp-2step-serversize:
+.. _hotp-2step-difficulty:
+.. _totp-2step-difficulty:
 
-{type}_2step_clientsize, {type}_2step_serversize, {type}_2step_difficulty
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2step_clientsize, 2step_serversize, 2step_difficulty
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 type: string
 
-These are token type specific parameters. They control the key generation during the
-2step token enrollment (see :ref:`2step_enrollment`).
+These are token type specific parameters (with ``hotp_`` or ``totp_`` prefix).
+They control the key generation during the 2step token enrollment (see :ref:`2step_enrollment`).
 
 The ``serversize`` is the optional size (in bytes) of the server's key part.
 The ``clientsize`` is the size (in bytes) of the smartphone's key part.
@@ -390,12 +392,15 @@ specifies the number of rounds.
 This is new in version 2.21.
 
 .. _force_app_pin:
+.. _hotp-force-app-pin:
+.. _totp-force-app-pin:
 
-hotp_force_app_pin, totp_force_app_pin
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+force_app_pin
+~~~~~~~~~~~~~
 
 type: bool
 
+This is a token type specific parameter (with ``hotp_`` or ``totp_`` prefix).
 During enrollment of a privacyIDEA Authenticator smartphone app this policy is used
 to force the user to protect the token with a PIN.
 
@@ -459,7 +464,6 @@ verification during authentication, see :ref:`policy_push_ssl_verify_auth`.
 
 .. _policy_verify_enrollment:
 
-
 verify_enrollment
 ~~~~~~~~~~~~~~~~~
 
@@ -467,7 +471,7 @@ type: string
 
 This action takes a white space separated list of tokentypes.
 These tokens then need to be verified during enrollment.
-This is supported for HOTP, TOTP, Email and SMS tokens.
+This is supported for HOTP, TOTP, Email, SMS, Paper, TAN and Indexed Secret tokens.
 
 In this case after enrolling the token the user is prompted to enter
 a valid OTP value. This way the system can verify, that the user has
@@ -621,21 +625,22 @@ supported by the token.
 .. note:: If you configure this, you will likely also want to configure
     :ref:`policy_webauthn_authn_user_verification_requirement`.
 
-.. _policy_webauthn_enroll_public_key_credential_algorithm_preference:
+.. _policy_webauthn_enroll_public_key_credential_algorithms:
 
-webauthn_public_key_credential_algorithm_preference
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+webauthn_public_key_credential_algorithms
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 type: string
 
-This action configures which algorithms should be preferred for the creation
-of WebAuthn asymmetric cryptography key pairs, and in which order. privacyIDEA
-currently supports ECDSA as well as RSASSA-PSS. Please check back with the
-manufacturer of your authenticators to get information on which algorithms are
-acceptable to your model of authenticator.
+This action configures which algorithms should be available for the creation
+of WebAuthn asymmetric cryptography key pairs. privacyIDEA
+currently supports ECDSA, RSASSA-PSS and RSASSA-PKCS1-v1_5. Please check back
+with the manufacturer of your authenticators to get information on which
+algorithms are acceptable to your model of authenticator.
 
-The default is to allow both ECDSA and RSASSA-PSS, but to prefer ECDSA over
-RSASSA-PSS.
+The default is to allow both ECDSA and RSASSA-PSS.
+
+The Order of preferred algorithms is `ECDSA > RSASSA-PSS > RSASSA-PKCS1-v1_5`
 
 .. note:: Not all authenticators will supports all algorithms. It should not
     usually be necessary to configure this action. Do *not* change this
@@ -720,7 +725,7 @@ type: string
 This action allows filtering of WebAuthn tokens by the fields of the
 attestation certificate.
 
-The action can be specified like this:
+The action can be specified like this::
 
     webauthn_req=subject/.*Yubico.*/
 
@@ -746,6 +751,18 @@ challenge text received during authentication
 (see :ref:`policy_webauthn_challenge_text_auth`).
 
 
+.. _policy_webauthn_avoid_double_registration:
+
+webauthn_avoid_double_registration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+type: bool
+
+If this policy is set, a user or an admin can not register the same webauthn
+token to a user more than once.
+However, the same webauthn token could be registered to a different user.
+
+
 .. _require_attestation:
 
 certificate_require_attestation
@@ -768,9 +785,79 @@ The trusted root certificate authorities and intermediate certificate authoritie
 the policies :ref:`admin_trusted_attestation_CA` and :ref:`user_trusted_attestation_CA`
 
 
+.. _policy_certificate_ca_connector:
 
+certificate_ca_connector
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+type: string
+
+During enrollment of a `certificate` token the user needs to specify the CA connector
+from which the CSR should be signed.
+This policy adds the given CA connector parameter to the request.
+The list of CA connectors is read from the configured connectors.
+
+.. note:: When using the privacyIDEA Smartcard Enrollment Tool, this policy needs to be set, otherwise
+   the enrollment will fail.
+
+
+.. _policy_certificate_template:
+
+certificate_template
+~~~~~~~~~~~~~~~~~~~~
+
+type: string
+
+During enrollment of a `certificate` token the user needs to specify the certificate template that should be used
+for enrollment. This policy adds the given template parameter to the request.
+The administrator needs to add the name of the template manually in this policy.
+
+.. note:: When using the privacyIDEA Smartcard Enrollment Tool in combination with a Microsoft CA,
+   this policy needs to be set, otherwise the enrollment will fail.
+
+
+.. _policy_certificate_request_subject_component:
+
+certificate_request_subject_component
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+type: string
+
+During enrollment of a `certificate` by creating a request, privacyIDEA can add additional
+components to the request subject.
+
+This can be "email" (The email of the user read from the userstore) and/or "realm", which
+is written to the orgnaizationalUnit (OU) of the request.
+
+.. note:: A couple of certificate templates on the Microsoft CA will not allow to have the
+   email component directly in the subject!
 
 .. rubric:: Footnotes
 
 .. [#rpid] https://w3.org/TR/webauthn-2/#rp-id
 .. [#webauthnrelyingparty] https://w3.org/TR/webauthn-2/#webauthn-relying-party
+
+
+.. _policy_require_description:
+
+require_description
+~~~~~~~~~~~~~~~~~~~~
+
+type: list
+
+To prevent tokens from becoming unidentifiable after a device loss, a description can
+be enforced with the "require_description policy". The desired token-types can be
+selected here. After setting up the policy, the selected token types can only be
+enrolled if a description is set during enrollment.
+
+.. _policy_email_validate:
+
+email_validation
+~~~~~~~~~~~~~~~~
+
+type: string
+
+This action can be used to validate the email address of the user during enrollment.
+The administrator specifies the Python module, that should be used to validate the email address.
+The modules can be defined in the `pi.cfg` file.
+See :ref:`picfg_email_validators` for more information.

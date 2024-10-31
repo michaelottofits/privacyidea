@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # 2015-11-03 Cornelius Kölbel <cornelius@privacyidea.org>
 #            Add check if an admin user exists
 # 2014-12-15 Cornelius Kölbel, info@privacyidea.org
@@ -26,6 +24,9 @@ from privacyidea.lib.token import check_user_pass
 from privacyidea.lib.policydecorators import libpolicy, login_mode
 from privacyidea.lib.crypto import hash_with_pepper, verify_with_pepper
 from privacyidea.lib.utils import fetch_one_resource
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class ROLE(object):
@@ -61,7 +62,7 @@ def db_admin_exist(username):
     return bool(get_db_admin(username))
 
 
-def create_db_admin(app, username, email=None, password=None):
+def create_db_admin(username, email=None, password=None):
     pw_dig = None
     if password:
         pw_dig = hash_with_pepper(password)
@@ -70,11 +71,7 @@ def create_db_admin(app, username, email=None, password=None):
 
 
 def list_db_admin():
-    admins = Admin.query.all()
-    print("Name \t email")
-    print(30*"=")
-    for admin in admins:
-        print("{0!s} \t {1!s}".format(admin.username, admin.email))
+    return Admin.query.all()
 
 
 def get_db_admins():
@@ -125,10 +122,13 @@ def check_webui_user(user_obj,
 
     if check_otp:
         # check if the given password matches an OTP token
-        check, details = check_user_pass(user_obj, password, options=options)
-        details["loginmode"] = "privacyIDEA"
-        if check:
-            user_auth = True
+        try:
+            check, details = check_user_pass(user_obj, password, options=options)
+            details["loginmode"] = "privacyIDEA"
+            if check:
+                user_auth = True
+        except Exception as e:
+            log.debug("Error authenticating user against privacyIDEA: {0!r}".format(e))
     else:
         # check the password of the user against the userstore
         if user_obj.check_password(password):

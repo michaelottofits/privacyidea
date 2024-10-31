@@ -1,5 +1,4 @@
-# -*- coding: utf-8 -*-
-
+"""Base test configuration to set up/teardown tests."""
 import unittest
 import mock
 from sqlalchemy.orm.session import close_all_sessions
@@ -7,8 +6,8 @@ from sqlalchemy.orm.session import close_all_sessions
 from privacyidea.app import create_app
 from privacyidea.config import TestingConfig
 from privacyidea.models import db, save_config_timestamp
-from privacyidea.lib.resolver import (save_resolver)
-from privacyidea.lib.realm import (set_realm)
+from privacyidea.lib.resolver import save_resolver
+from privacyidea.lib.realm import set_realm
 from privacyidea.lib.user import User
 from privacyidea.lib.auth import create_db_admin
 from privacyidea.lib.auditmodules.base import Audit
@@ -27,14 +26,20 @@ class FakeFlaskG(object):
     request_headers = None
     serial = None
 
+    def get(self, name, default=None):
+        return self.__dict__.get(name, default)
+
 
 class FakeAudit(Audit):
 
     def __init__(self):
+        super(FakeAudit).__init__()
         self.audit_data = {}
 
 
 class MyTestCase(unittest.TestCase):
+    app = None
+    app_context = None
     resolvername1 = "resolver1"
     resolvername2 = "Resolver2"
     resolvername3 = "reso3"
@@ -57,19 +62,24 @@ class MyTestCase(unittest.TestCase):
                         "399871",
                         "520489"]
 
-    
     @classmethod
     def setUpClass(cls):
         cls.app = create_app('testing', "")
         cls.app_context = cls.app.app_context()
         cls.app_context.push()
         db.create_all()
-        # save the current timestamp to the database to avoid hanging cached
-        # data
+
+        # save the current timestamp to the database to avoid hanging cached data
         save_config_timestamp()
         db.session.commit()
         # Create an admin for tests.
-        create_db_admin(cls.app, cls.testadmin, cls.testadminmail, cls.testadminpw)
+        create_db_admin(cls.testadmin, cls.testadminmail, cls.testadminpw)
+
+    def tearDown(self):
+        # Commit all changes to the DB and close the session to avoid breaking
+        # following tests due to unfinished transactions
+        db.session.commit()
+        db.session.close()
 
     def setUp_user_realms(self):
         # create user realm
@@ -78,8 +88,7 @@ class MyTestCase(unittest.TestCase):
                              "fileName": PWFILE})
         self.assertTrue(rid > 0, rid)
 
-        (added, failed) = set_realm(self.realm1,
-                                    [self.resolvername1])
+        (added, failed) = set_realm(self.realm1, [{'name': self.resolvername1}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 1)
 
@@ -105,7 +114,7 @@ class MyTestCase(unittest.TestCase):
         self.assertTrue(rid > 0, rid)
 
         (added, failed) = set_realm(self.realm2,
-                                    [self.resolvername1])
+                                    [{'name': self.resolvername1}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 1)
 
@@ -131,7 +140,7 @@ class MyTestCase(unittest.TestCase):
         self.assertTrue(rid > 0, rid)
 
         (added, failed) = set_realm(self.realm3,
-                                    [self.resolvername3])
+                                    [{'name': self.resolvername3}])
         self.assertTrue(len(failed) == 0)
         self.assertTrue(len(added) == 1)
 
@@ -169,7 +178,7 @@ class MyTestCase(unittest.TestCase):
                       }
         r = save_resolver(parameters)
         self.assertTrue(r)
-        success, fail = set_realm(realm, ["sqlite_resolver"])
+        success, fail = set_realm(realm, [{'name': "sqlite_resolver"}])
         self.assertEqual(len(success), 1)
         self.assertEqual(len(fail), 0)
 
@@ -195,8 +204,7 @@ class MyTestCase(unittest.TestCase):
     def authenticate_selfservice_user(self):
         with self.app.test_request_context('/auth',
                                            method='POST',
-                                           data={"username":
-                                                     "selfservice@realm1",
+                                           data={"username": "selfservice@realm1",
                                                  "password": "test"}):
             res = self.app.full_dispatch_request()
             self.assertTrue(res.status_code == 200, res)

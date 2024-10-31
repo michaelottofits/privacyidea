@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 This test file tests the lib/passwordreset.py
 """
@@ -78,9 +77,9 @@ class RecoveryTestCase(MyTestCase):
         r = save_resolver(param)
         self. assertTrue(r > 0)
 
-        added, failed = set_realm("register", resolvers=["register"])
-        self.assertTrue(len(added )> 0)
-        self.assertEqual(len(failed), 0)
+        added, failed = set_realm("register", resolvers=[{'name': "register"}])
+        self.assertGreater(len(added), 0, added)
+        self.assertEqual(len(failed), 0, failed)
 
         g = FakeFlaskG()
         g.client_ip = "127.0.0.1"
@@ -114,10 +113,10 @@ class RecoveryTestCase(MyTestCase):
         r = add_smtpserver(identifier="myserver", server="1.2.3.4")
         self.assertTrue(r > 0)
         set_privacyidea_config("recovery.identifier", "myserver")
-        r = create_recoverycode(User(u"nönäscii", "register"), recoverycode=recoverycode)
+        r = create_recoverycode(User("nönäscii", "register"), recoverycode=recoverycode)
         self.assertEqual(r, True)
 
-        user = User(u"nönäscii", "register")
+        user = User("nönäscii", "register")
 
         r = check_recoverycode(user, recoverycode)
         self.assertEqual(r, True)

@@ -21,6 +21,11 @@ Usually it is set to::
 Advanced Logging
 ~~~~~~~~~~~~~~~~
 
+In the advanced logging you can use the Python logging configuration to
+define in a fine graded way which information should be logged where.
+For more details see `python logging config <https://docs.python.org/3/library/logging.config.html#module-logging.config>`_.
+
+
 You can also define a more detailed logging by specifying a
 log configuration file. By default the file is ``/etc/privacyidea/logging.cfg``.
 
@@ -59,6 +64,12 @@ Such a YAML based configuration could look like this:
         formatter: detail
         level: INFO
         filename: /var/log/privacyidea/privacyidea.log
+      syslog:
+        class: logging.handlers.SysLogHandler
+        address: ('192.168.1.110', 514)
+        formatter: detail
+        level: INFO
+
     loggers:
       # The logger name is the qualname
       privacyidea:
@@ -66,7 +77,10 @@ Such a YAML based configuration could look like this:
         - file
         - mail
         level: INFO
+
     root:
+      handlers:
+      - syslog
       level: WARNING
 
 Different handlers can be used to send log messages to log-aggregators like

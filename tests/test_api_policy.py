@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
-
 from .base import MyApiTestCase
 from privacyidea.lib.policy import set_policy, SCOPE, ACTION, delete_policy, CONDITION_SECTION
 from privacyidea.lib.token import remove_token
+from privacyidea.models import db, NodeName
 
 
 class APIPolicyTestCase(MyApiTestCase):
@@ -45,7 +44,8 @@ class APIPolicyTestCase(MyApiTestCase):
                                                  "scope": SCOPE.AUTHZ,
                                                  "check_all_resolvers": "true",
                                                  "realm": "realm1",
-                                                 "priority": 3},
+                                                 "priority": 3,
+                                                 "description": "This is a test policy"},
                                            headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertTrue(res.status_code == 200, res)
@@ -66,6 +66,7 @@ class APIPolicyTestCase(MyApiTestCase):
             pol1 = value[0]
             self.assertEqual(pol1.get("check_all_resolvers"), True)
             self.assertEqual(pol1.get("priority"), 3)
+            self.assertEqual(pol1.get("description"), "This is a test policy", pol1)
 
         # get active policies
         with self.app.test_request_context('/policy/?active=true',
@@ -147,17 +148,17 @@ class APIPolicyTestCase(MyApiTestCase):
     def test_02_set_policy_conditions(self):
         # set a policy with conditions
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "realm": "realm1",
-                                         "conditions": [
-                                             ["userinfo", "groups", "contains", "group1", True],
-                                             ["userinfo", "type", "equals", "secure", False],
-                                             ["HTTP header", "Origin", "equals", "https://localhost", True]
-                                         ]},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "realm": "realm1",
+                                                 "conditions": [
+                                                     ["userinfo", "groups", "contains", "group1", True],
+                                                     ["userinfo", "type", "equals", "secure", False],
+                                                     ["HTTP header", "Origin", "equals", "https://localhost", True]
+                                                 ]},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
 
@@ -180,12 +181,12 @@ class APIPolicyTestCase(MyApiTestCase):
 
         # update the policy, but not its conditions
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
 
@@ -208,13 +209,13 @@ class APIPolicyTestCase(MyApiTestCase):
 
         # update the policy conditions
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "conditions": [["userinfo", "type", "equals", "secure", True]],
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "conditions": [["userinfo", "type", "equals", "secure", True]],
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
 
@@ -236,59 +237,60 @@ class APIPolicyTestCase(MyApiTestCase):
         # test some invalid conditions
         # no 5-tuples
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "conditions": [["userinfo", "type", "equals", "secure"]],
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "conditions": [["userinfo", "type", "equals", "secure"]],
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 400)
 
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "conditions": [["userinfo", "type", "equals", "secure", True, "extra"]],
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "conditions": [["userinfo", "type", "equals",
+                                                                 "secure", True, "extra"]],
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 400)
 
         # wrong types
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "conditions": [["userinfo", "type", "equals", 123, False]],
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "conditions": [["userinfo", "type", "equals", 123, False]],
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 400)
 
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "conditions": [["userinfo", "type", "equals", "123", "true"]],
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "conditions": [["userinfo", "type", "equals", "123", "true"]],
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 400)
 
         # reset conditions
         with self.app.test_request_context('/policy/cond1',
-                                   method='POST',
-                                   json={"action": ACTION.NODETAILFAIL,
-                                         "client": "10.1.2.3",
-                                         "scope": SCOPE.AUTHZ,
-                                         "conditions": [],
-                                         "realm": "realm2"},
-                                   headers={'Authorization': self.at}):
+                                           method='POST',
+                                           json={"action": ACTION.NODETAILFAIL,
+                                                 "client": "10.1.2.3",
+                                                 "scope": SCOPE.AUTHZ,
+                                                 "conditions": [],
+                                                 "realm": "realm2"},
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
 
@@ -306,8 +308,8 @@ class APIPolicyTestCase(MyApiTestCase):
 
         # delete policy
         with self.app.test_request_context('/policy/cond1',
-                                   method='DELETE',
-                                   headers={'Authorization': self.at}):
+                                           method='DELETE',
+                                           headers={'Authorization': self.at}):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
 
@@ -317,7 +319,7 @@ class APIPolicyTestCase(MyApiTestCase):
                                            method='POST',
                                            data={
                                                "action": "{0!s}, {1!s}".format(ACTION.POLICYDELETE,
-                                               ACTION.POLICYREAD),
+                                                                               ACTION.POLICYREAD),
                                                "scope": SCOPE.ADMIN,
                                                "realm": "",
                                                "adminuser": "testadmin",
@@ -358,7 +360,7 @@ class APIPolicyTestCase(MyApiTestCase):
             status = result.get("status")
             self.assertFalse(status)
             message = result.get("error").get("message")
-            self.assertEqual(message, u"Admin actions are defined, but you are not allowed to enroll this token type!")
+            self.assertEqual(message, "Admin actions are defined, but you are not allowed to enroll this token type!")
 
         # Delete the policy
         with self.app.test_request_context('/policy/pol1adminuser',
@@ -373,6 +375,9 @@ class APIPolicyTestCase(MyApiTestCase):
             self.assertTrue(status)
 
     def test_04_policy_defs(self):
+        db.session.add(NodeName(id="8e4272a9-9037-40df-8aa3-976e4a04b5a9", name="Node1"))
+        db.session.add(NodeName(id="d1d7fde6-330f-4c12-88f3-58a1752594bf", name="Node2"))
+        db.session.commit()
         with self.app.test_request_context('/policy/defs/conditions',
                                            method='GET',
                                            headers={
@@ -419,6 +424,7 @@ class APIPolicyTestCase(MyApiTestCase):
             result = data.get("result")
             self.assertEqual(result['error'], {'code': 302, 'message': 'ERR302: Invalid client definition!'})
 
+
 class APIPolicyConditionTestCase(MyApiTestCase):
 
     def test_01_check_httpheader_condition(self):
@@ -442,7 +448,7 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             self.assertEqual(res.status_code, 200)
             result = res.json
             self.assertTrue("detail" in result)
-            self.assertEqual(result.get("detail").get("message"), u"matching 1 tokens")
+            self.assertEqual(result.get("detail").get("message"), "matching 1 tokens")
 
         # set a policy with conditions
         # Request from a certain user agent will not see the detail
@@ -468,7 +474,7 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             self.assertEqual(res.status_code, 200)
             result = res.json
             self.assertTrue("detail" in result)
-            self.assertEqual(result.get("detail").get("message"), u"matching 1 tokens")
+            self.assertEqual(result.get("detail").get("message"), "matching 1 tokens")
 
         # A request with the dedicated header will not display the details
         with self.app.test_request_context('/validate/check',
@@ -490,9 +496,9 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 403)
             result = res.json
-            self.assertIn(u"Unknown HTTP header key referenced in condition of policy",
+            self.assertIn("Unknown HTTP header key referenced in condition of policy",
                           result["result"]["error"]["message"])
-            self.assertIn(u"User-Agent", result["result"]["error"]["message"])
+            self.assertIn("User-Agent", result["result"]["error"]["message"])
 
         # A request without such a specific header - always has a header
         with self.app.test_request_context('/validate/check',
@@ -502,9 +508,9 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 403)
             result = res.json
-            self.assertIn(u"Unknown HTTP header key referenced in condition of policy",
+            self.assertIn("Unknown HTTP header key referenced in condition of policy",
                           result["result"]["error"]["message"])
-            self.assertIn(u"User-Agent", result["result"]["error"]["message"])
+            self.assertIn("User-Agent", result["result"]["error"]["message"])
 
         # Test http header policy with broken matching
         # update the policy
@@ -529,7 +535,7 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 403)
             result = res.json
-            self.assertIn(u"Invalid comparison in the HTTP header conditions of policy",
+            self.assertIn("Invalid comparison in the HTTP header conditions of policy",
                           result["result"]["error"]["message"])
 
         # Also check for an unknown section
@@ -585,7 +591,7 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             self.assertEqual(res.status_code, 200)
             result = res.json
             self.assertTrue("detail" in result)
-            self.assertEqual(result.get("detail").get("message"), u"matching 1 tokens")
+            self.assertEqual(result.get("detail").get("message"), "matching 1 tokens")
 
         # set a policy with conditions
         # Request with a certain request method will not see the user details
@@ -610,7 +616,7 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             self.assertEqual(res.status_code, 200)
             result = res.json
             self.assertTrue("detail" in result)
-            self.assertEqual(result.get("detail").get("message"), u"matching 1 tokens")
+            self.assertEqual(result.get("detail").get("message"), "matching 1 tokens")
 
         # A POST request will NOT contain the details!
         with self.app.test_request_context('/validate/check',
@@ -643,9 +649,9 @@ class APIPolicyConditionTestCase(MyApiTestCase):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 403)
             result = res.json
-            self.assertIn(u"Unknown HTTP environment key referenced in condition of policy",
+            self.assertIn("Unknown HTTP environment key referenced in condition of policy",
                           result["result"]["error"]["message"])
-            self.assertIn(u"NON_EXISTING", result["result"]["error"]["message"])
+            self.assertIn("NON_EXISTING", result["result"]["error"]["message"])
 
         delete_policy("cond1")
         remove_token("sp1")

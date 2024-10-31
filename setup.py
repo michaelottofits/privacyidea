@@ -1,12 +1,10 @@
-# -*- coding: utf-8 -*-
-from __future__ import print_function
 from setuptools import setup, find_packages
 import os
 import stat
 import sys
 
 #VERSION = "2.1dev4"
-VERSION = "3.7.2"
+VERSION = "3.10"
 
 # Taken from kennethreitz/requests/setup.py
 package_directory = os.path.realpath(os.path.dirname(__file__))
@@ -30,40 +28,40 @@ def get_file_list(file_path):
     return [file_path + f for f in file_list]
 
 
-install_requires = ["beautifulsoup4[lxml]>=4.3.2",
-                    "cbor2>=5.0.1",
-                    "configobj>=5.0.6",
-                    "croniter>=0.3.8",
-                    "cryptography>=2.4.2",
-                    "defusedxml>=0.4.1",
-                    "Flask>=0.10.1,<2.0",
-                    "Flask-Babel>=0.9",
-                    "Flask-Migrate>=1.2.0,<3.0",
-                    "Flask-Script>=2.0.5",
-                    "Flask-SQLAlchemy>=2.0",
-                    "Flask-Versioned>=0.9.4",
-                    "future>=0.18.2;python_version<'3.0'",
-                    "google-auth>=1.23.0",
-                    "huey[redis]>=1.11.0",
-                    "importlib_metadata>=2.1.1",
-                    "ldap3>=2.6",
-                    "netaddr>=0.7.12",
-                    "passlib[bcrypt]>=1.7.0",
-                    "argon2_cffi>=20.1.0",
-                    "Pillow>=6.2.1",
-                    "pydash>=4.7.4",
-                    "PyJWT>=1.3.0",
-                    "PyMySQL>=0.6.6",
-                    "pyOpenSSL>=17.5",
-                    "pyrad>=2.0",
-                    "python-dateutil>=2.7.3",
-                    "python-gnupg>=0.4.4",
-                    "PyYAML>=5.1",
-                    "qrcode>=6.1",
-                    "requests>=2.7.0",
-                    "smpplib>=2.0",
-                    "SQLAlchemy>=1.3.0,<1.4.0",
-                    "sqlsoup>=0.9.0"]
+install_requires = [
+    "argon2_cffi",
+    "beautifulsoup4[lxml]",
+    "cbor2",
+    "configobj",
+    "croniter",
+    "cryptography",
+    "defusedxml",
+    "Flask",
+    "Flask-Babel",
+    "Flask-Migrate",
+    "Flask-SQLAlchemy",
+    "Flask-Versioned",
+    "google-auth",
+    "grpcio",
+    "huey[redis]",
+    "ldap3<2.9",
+    "MarkupSafe",
+    "netaddr",
+    "passlib[bcrypt]",
+    "protobuf",
+    "pydash",
+    "PyJWT",
+    "PyMySQL",
+    "pyOpenSSL<=24.0.0",
+    "pyrad",
+    "python-dateutil",
+    "python-gnupg",
+    "PyYAML",
+    "requests",
+    "segno",
+    "smpplib",
+    "SQLAlchemy<2.0"
+]
 
 
 def get_man_pages(dir):
@@ -97,29 +95,41 @@ def get_scripts(dir):
 setup(
     name='privacyIDEA',
     version=VERSION,
-    description='privacyIDEA: identity, multifactor authentication (OTP), '
-                'authorization, audit',
+    description='privacyIDEA: multifactor authentication management system',
     author='privacyidea.org',
     license='AGPLv3',
     author_email='cornelius@privacyidea.org',
-    url='http://www.privacyidea.org',
+    url='https://www.privacyidea.org',
     keywords='OTP, two factor authentication, management, security',
-    python_requires='>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*',
+    python_requires='>=3.8',
     packages=find_packages(),
-    scripts=["pi-manage"] + get_scripts("tools"),
+    scripts=get_scripts("tools"),
+    entry_points={
+        'console_scripts': [
+            'privacyidea-token-janitor = privacyidea.cli.privacyideatokenjanitor:cli',
+            'pi-manage = privacyidea.cli.pimanage:cli',
+            'privacyidea-standalone = privacyidea.cli.tools.standalone:cli',
+            'privacyidea-get-serial = privacyidea.cli.tools.get_serial:byotp_call',
+            'privacyidea-usercache-cleanup = privacyidea.cli.tools.usercache_cleanup:delete_call',
+            'privacyidea-get-unused-tokens = privacyidea.cli.tools.get_unused_tokens:cli',
+            'privacyidea-expired-users = privacyidea.cli.tools.expired_users:expire_call',
+            'privacyidea-cron = privacyidea.cli.tools.cron:cli'
+        ]},
     extras_require={
-        'doc': ["Pallets-Sphinx-Themes>=1.2.3",
-                "Sphinx>=1.3.1",
-                "sphinxcontrib-httpdomain>=1.3.0",
-                "sphinxcontrib-plantuml>=0.18",
-                "sphinxcontrib-spelling>=7.0.0"],
-        'test': ["mock>=2.0.0",
-                 "pytest>=3.6.0",
-                 "pytest-cov>=2.5.1",
-                 "responses>=0.9.0",
-                 "testfixtures>=6.14.2"],
+        'doc': ["Pallets-Sphinx-Themes",
+                "Sphinx",
+                "sphinxcontrib-httpdomain",
+                "sphinxcontrib-plantuml",
+                "sphinxcontrib-spelling"],
+        'test': ["mock",
+                 "pyparsing",
+                 "pytest",
+                 "pytest-cov",
+                 "responses",
+                 "testfixtures"],
         'postgres': ['psycopg2>=2.8.3'],
-        'hsm': ['PyKCS11>=1.5.10']
+        'hsm': ['PyKCS11>=1.5.10'],
+        'kerberos': ['gssapi>=1.7.0']
     },
     install_requires=install_requires,
     include_package_data=True,
@@ -146,15 +156,12 @@ setup(
                  "Topic :: System ::"
                  " Systems Administration :: Authentication/Directory",
                  'Programming Language :: Python',
-                 'Programming Language :: Python :: 2',
-                 'Programming Language :: Python :: 2.7',
                  'Programming Language :: Python :: 3',
-                 'Programming Language :: Python :: 3.5',
-                 'Programming Language :: Python :: 3.6',
-                 'Programming Language :: Python :: 3.7',
                  'Programming Language :: Python :: 3.8',
                  'Programming Language :: Python :: 3.9',
-                 'Programming Language :: Python :: 3.10'
+                 'Programming Language :: Python :: 3.10',
+                 'Programming Language :: Python :: 3.11',
+                 'Programming Language :: Python :: 3.12'
                  ],
     zip_safe=False,
     long_description=get_file_contents('README.rst')

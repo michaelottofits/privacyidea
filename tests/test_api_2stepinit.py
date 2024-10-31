@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import hashlib
 import binascii
 import base64
@@ -123,7 +122,7 @@ class TwoStepInitTestCase(MyApiTestCase):
             self.assertTrue(result.get("result").get("status"))
             self.assertFalse(result.get("result").get("value"))
             self.assertEqual(result.get("detail").get("message"),
-                             u'matching 1 tokens, Token is disabled')
+                             'matching 1 tokens, Token is disabled')
 
         # Now doing the correct 2nd step
         with self.app.test_request_context('/token/init',
@@ -216,7 +215,7 @@ class TwoStepInitTestCase(MyApiTestCase):
             self.assertTrue(result.get("result").get("status"))
             self.assertFalse(result.get("result").get("value"))
             self.assertEqual(result.get("detail").get("message"),
-                         u'matching 1 tokens, Token is disabled')
+                         'matching 1 tokens, Token is disabled')
 
         client_component = b"wrongsize" # 9 bytes
         hex_client_component = binascii.hexlify(client_component)
@@ -498,7 +497,7 @@ class TwoStepInitTestCase(MyApiTestCase):
             self.assertTrue(result.get("result").get("status"))
             self.assertFalse(result.get("result").get("value"))
             self.assertEqual(result.get("detail").get("message"),
-                         u'matching 1 tokens, Token is disabled')
+                         'matching 1 tokens, Token is disabled')
 
         # Now doing the correct 2nd step
         with self.app.test_request_context('/token/init',
@@ -596,7 +595,7 @@ class TwoStepInitTestCase(MyApiTestCase):
             self.assertTrue(result.get("result").get("status"))
             self.assertFalse(result.get("result").get("value"))
             self.assertEqual(result.get("detail").get("message"),
-                         u'matching 1 tokens, Token is disabled')
+                         'matching 1 tokens, Token is disabled')
 
         client_component = b"wrongsize" # 9 bytes
         hex_client_component = binascii.hexlify(client_component)

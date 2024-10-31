@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 This test file tests the lib/machine.py for attaching and detaching tokens
 """
+from privacyidea.lib.error import ResourceNotFoundError, ParameterError
 
 HOSTSFILE = "tests/testdata/hosts"
 from .base import MyTestCase
@@ -58,6 +58,17 @@ class MachineTokenTestCase(MyTestCase):
         self.assertRaises(Exception, attach_token, self.serial, "luks",
                           machine_id="192.168.0.1")
 
+        # attach token with non-existing serial
+        self.assertRaises(ResourceNotFoundError, attach_token, "nonexisting", "luks")
+
+        # attach token with non-existing application
+        test_token = init_token({"type": "spass"})
+        self.assertRaises(ParameterError, attach_token, test_token.get_serial(), "nonexisting")
+        # look at token, if we do not see the machine
+        tok = get_tokens(serial=test_token.get_serial())[0]
+        machine_list = tok.token.machine_list
+        self.assertEqual(len(machine_list), 0)
+
     def test_02_detach_token(self):
         detach_token(self.serial, "luks", hostname="gandalf")
 
@@ -65,10 +76,6 @@ class MachineTokenTestCase(MyTestCase):
         tok = get_tokens(serial=self.serial)[0]
         machine_list = tok.token.machine_list
         self.assertEqual(len(machine_list), 0)
-        # problem detaching token with incomplete machine definition (missing
-        #  resolver)
-        self.assertRaises(Exception, detach_token, self.serial, "luks",
-                          machine_id="192.168.0.1")
 
     def test_03_add_delete_option(self):
         mt = attach_token(self.serial, "luks", hostname="gandalf")
@@ -88,7 +95,7 @@ class MachineTokenTestCase(MyTestCase):
             if option.mt_key == "option1":
                 self.assertEqual(option.mt_value, "value1")
             elif option.mt_key == "option2":
-                self.assertEqual(option.mt_value, u"valü2")
+                self.assertEqual(option.mt_value, "valü2")
             else:
                 self.fail("Unspecified Option! {0!s}".format(option.mt_key))
 
@@ -116,7 +123,6 @@ class MachineTokenTestCase(MyTestCase):
         self.assertEqual(len(machinelist), 1)
         self.assertEqual(machinelist[0].get("resolver"), "reso1")
         self.assertEqual(machinelist[0].get("machine_id"), "192.168.0.1")
-
 
     def test_10_auth_items(self):
         # create an SSH token
@@ -151,6 +157,10 @@ class MachineTokenTestCase(MyTestCase):
         sshkey_auth_items = ai.get("ssh")
         # None or an empty list
         self.assertFalse(sshkey_auth_items)
+        # detach token
+        detach_token(self.serial2, "ssh", hostname="gandalf")
+        mt = list_token_machines(self.serial2)
+        self.assertEqual(0, len(mt))
 
     def test_11_attach_token_without_machine(self):
         mt = attach_token(self.serialHotp, "offline")
@@ -184,3 +194,28 @@ class MachineTokenTestCase(MyTestCase):
         tok = get_tokens(serial=self.serialHotp)[0]
         machine_list = tok.token.machine_list
         self.assertEqual(len(machine_list), 0)
+
+    def test_15_detach_ssh_by_service_id(self):
+        token_obj = init_token({"serial": self.serial2, "type": "sshkey",
+                                "sshkey": sshkey})
+        self.assertEqual(token_obj.type, "sshkey")
+
+        # Attach the token to the machine "gandalf" with the application SSH
+        r = attach_token(serial=self.serial2,
+                         application="ssh", options={"user": "testuser", "service_id": "webserver"})
+        r = attach_token(serial=self.serial2,
+                         application="ssh", options={"user": "root", "service_id": "mailserver"})
+        r = attach_token(serial=self.serial2,
+                         application="ssh", options={"user": "testuser", "service_id": "mailserver"})
+        mt = list_token_machines(self.serial2)
+        self.assertEqual(3, len(mt), mt)
+
+        # Detach only one application
+        detach_token(self.serial2, "ssh", filter_params={"user": "testuser", "service_id": "mailserver"})
+        mt = list_token_machines(self.serial2)
+        self.assertEqual(2, len(mt))
+
+        # Detach all remaining applications
+        detach_token(self.serial2, "ssh")
+        mt = list_token_machines(self.serial2)
+        self.assertEqual(0, len(mt))

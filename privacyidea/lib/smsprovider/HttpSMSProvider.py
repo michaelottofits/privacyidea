@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #    E-mail: info@privacyidea.org
 #    Contact: www.privacyidea.org
 #
@@ -39,7 +37,7 @@
 #
 
 __doc__ = """This is the SMSClass to send SMS via HTTP Gateways
-It can handle HTTP/HTTPS PUT and GET requests also with Proxy support
+It can handle HTTP/HTTPS POST and GET requests also with Proxy support
 
 The code is tested in tests/test_lib_smsprovider
 """
@@ -47,27 +45,14 @@ The code is tested in tests/test_lib_smsprovider
 from privacyidea.lib.smsprovider.SMSProvider import (ISMSProvider, SMSError)
 from privacyidea.lib import _
 import requests
-from six.moves.urllib.parse import urlparse
-import re
+import json
+from urllib.parse import urlparse
 import logging
+
 log = logging.getLogger(__name__)
 
 
 class HttpSMSProvider(ISMSProvider):
-
-    @staticmethod
-    def _mangle_phone(phone, config):
-        regexp = config.get("REGEXP")
-        if regexp:
-            try:
-                m = re.match("^/(.*)/(.*)/$", regexp)
-                if m:
-                    phone = re.sub(m.group(1), m.group(2), phone)
-            except re.error:
-                log.warning(u"Can not mangle phone number. "
-                            u"Please check your REGEXP: {0!s}".format(regexp))
-
-        return phone
 
     def submit_message(self, phone, message):
         """
@@ -77,7 +62,6 @@ class HttpSMSProvider(ISMSProvider):
         :param message: the message to submit to the phone
         :return:
         """
-        log.debug("submitting message {0!r} to {1!s}".format(message, phone))
         parameter = {}
         headers = {}
         if self.smsgateway:
@@ -88,6 +72,8 @@ class HttpSMSProvider(ISMSProvider):
             password = self.smsgateway.option_dict.get("PASSWORD")
             ssl_verify = self.smsgateway.option_dict.get("CHECK_SSL",
                                                          "yes") == "yes"
+            json_data = self.smsgateway.option_dict.get("SEND_DATA_AS_JSON",
+                                                        "no") == "yes"
             # FIXME: The Proxy option is deprecated and will be removed a version > 2.21
             proxy = self.smsgateway.option_dict.get("PROXY")
             http_proxy = self.smsgateway.option_dict.get('HTTP_PROXY')
@@ -96,7 +82,13 @@ class HttpSMSProvider(ISMSProvider):
             for k, v in self.smsgateway.option_dict.items():
                 if k not in self.parameters().get("parameters"):
                     # This is an additional option
-                    parameter[k] = v.format(otp=message, phone=phone)
+                    # We can not do .format() due to curly brackets in JSON
+                    v = v.replace("{otp}", message)
+                    v = v.replace("{phone}", phone)
+                    try:
+                        parameter[k] = json.loads(v)
+                    except json.decoder.JSONDecodeError:
+                        parameter[k] = v
             headers = self.smsgateway.header_dict
         else:
             phone = self._mangle_phone(phone, self.config)
@@ -105,12 +97,15 @@ class HttpSMSProvider(ISMSProvider):
             username = self.config.get('USERNAME')
             password = self.config.get('PASSWORD')
             ssl_verify = self.config.get('CHECK_SSL', True)
+            json_data = False
             # FIXME: The Proxy option is deprecated and will be removed a version > 2.21
             proxy = self.config.get('PROXY')
             http_proxy = self.config.get('HTTP_PROXY')
             https_proxy = self.config.get('HTTPS_PROXY')
             parameter = self._get_parameters(message, phone)
             timeout = self.config.get("TIMEOUT") or 3
+
+        log.debug("submitting message {0!r} to {1!s}".format(message, phone))
 
         if url is None:
             log.warning("can not submit message. URL is missing.")
@@ -141,18 +136,31 @@ class HttpSMSProvider(ISMSProvider):
         # url, parameter, username, password, method
         requestor = requests.get
         params = parameter
-        data = {}
+        data = None
+        json_param = None
         if method == "POST":
             requestor = requests.post
-            params = {}
-            data = parameter
+            params = None
+            if json_data:
+                json_param = parameter
+                log.debug("passing JSON data: {0!s}".format(json_param))
+            else:
+                data = parameter
 
-        log.debug(u"issuing request with parameters {0!s} headers {1!s} and method {2!s} and"
-                  "authentication {3!s} to url {4!s}.".format(params, headers, method,
-                                                              basic_auth, url))
+        log_dict = {'params': params,
+                    'headers': headers,
+                    'method': method,
+                    'basic_auth': basic_auth,
+                    'url': url,
+                    'data': data,
+                    'json_param': json_param}
+        log.debug("issuing request with parameters {params} (data: {data}, "
+                  "json: {json_param}), headers {headers}, method {method} and"
+                  "authentication {basic_auth} "
+                  "to url {url}.".format(**log_dict))
         # Todo: drop basic auth if Authorization-Header is given?
         r = requestor(url, params=params, headers=headers,
-                      data=data,
+                      data=data, json=json_param,
                       verify=ssl_verify,
                       auth=basic_auth,
                       timeout=float(timeout),
@@ -267,11 +275,14 @@ class HttpSMSProvider(ISMSProvider):
                                            "verified."),
                           "values": ["yes", "no"]
                       },
+                      "SEND_DATA_AS_JSON": {
+                          "required": True,
+                          "description": _("Should the data in a POST Request be sent "
+                                           "as JSON."),
+                          "values": ["yes", "no"]
+                      },
                       "REGEXP": {
-                          "description": _("Regular expression to modify the phone number "                 
-                                           "to make it compatible with provider. "
-                                           "Enter something like '/[\\+/]//' to remove "
-                                           "pluses and slashes.")
+                          "description": cls.regexp_description
                       },
                       "PROXY": {"description": _("An optional proxy string. DEPRECATED. Do not use "
                                                  "this anymore. Rather use HTTP_PROXY for http "

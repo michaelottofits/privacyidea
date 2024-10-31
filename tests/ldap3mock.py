@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 2020-09-07 Cornelius Kölbel <cornelius.koelbel@netknights.it>
            Add exception
@@ -38,10 +37,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from __future__ import (
-    absolute_import, division, unicode_literals
-)
-
 from passlib.hash import ldap_salted_sha1
 from ast import literal_eval
 import uuid
@@ -53,11 +48,7 @@ import pyparsing
 from .smtpmock import get_wrapped
 
 from collections import namedtuple
-
-try:
-    from collections import Sequence, Sized
-except ImportError:
-    from collections.abc import Sequence, Sized
+from collections.abc import Sequence, Sized
 
 from privacyidea.lib.utils import to_bytes, to_unicode
 
@@ -372,7 +363,7 @@ class Connection(object):
                         values_from_directory = values_from_directory.decode(
                             "utf-8")
                     elif type(values_from_directory) == int:
-                        values_from_directory = u"{0!s}".format(values_from_directory)
+                        values_from_directory = "{0!s}".format(values_from_directory)
                     if value == values_from_directory:
                         entry["type"] = "searchResEntry"
                         matches.append(entry)
@@ -640,7 +631,7 @@ class Connection(object):
         try:
             if isinstance(search_filter, bytes):
                 # We need to convert to unicode otherwise pyparsing will not
-                # find the u"ö"
+                # find the "ö"
                 search_filter = to_unicode(search_filter)
             expr = Connection._parse_filter()
             s_filter = expr.parseString(search_filter).asList()[0]
@@ -738,7 +729,7 @@ class Ldap3Mock(object):
         # Reload the directory just in case a change has been made to
         # user credentials
         self.directory = self._load_data(DIRECTORY)
-        if authentication == ldap3.ANONYMOUS and user == "":
+        if authentication == ldap3.ANONYMOUS and user is None:
             correct_password = True
         for entry in self.directory:
             if to_unicode(entry.get("dn")) == user:
@@ -769,13 +760,13 @@ class Ldap3Mock(object):
                                    self._server_mock)
         self._patcher.start()
 
-        def unbound_on_Connection(server, user,
-                                  password,
-                                  auto_bind,
-                                  client_strategy,
-                                  authentication,
-                                  check_names,
-                                  auto_referrals, *a, **kwargs):
+        def unbound_on_Connection(server=None, user=None,
+                                  password=None,
+                                  auto_bind=None,
+                                  client_strategy=None,
+                                  authentication=None,
+                                  check_names=None,
+                                  auto_referrals=None, *a, **kwargs):
             return self._on_Connection(server, user,
                                        password,
                                        auto_bind,

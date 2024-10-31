@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # 2015-06-04 Cornelius Kölbel  <cornelius.koelbel@netknights.it>
 #            Initial writeup
 #
@@ -40,7 +38,7 @@ import requests
 import syslog
 import traceback
 import passlib.hash
-from six.moves import configparser
+import configparser
 
 OK = True
 UNAUTHORIZED = False

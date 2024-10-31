@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2017-11-24 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Use HSM to generate Salt for PasswordHash
 #  2017-07-18 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -26,15 +24,13 @@ This is the library with base functions for privacyIDEA.
 
 This module is tested in tests/test_lib_utils.py
 """
-import six
-import logging; log = logging.getLogger(__name__)
+import os
+
+import logging
 from importlib import import_module
 import binascii
 import base64
-import qrcode
 import sqlalchemy
-from six.moves.urllib.parse import urlencode
-from io import BytesIO
 import string
 import re
 from datetime import timedelta, datetime
@@ -45,22 +41,40 @@ from netaddr import IPAddress, IPNetwork, AddrFormatError
 import hashlib
 import traceback
 import threading
-import importlib_metadata
+try:
+    from importlib import metadata
+except ImportError:
+    import importlib_metadata as metadata
 import time
 import html
+import segno
+import mimetypes
 
 from privacyidea.lib.error import ParameterError, ResourceNotFoundError, PolicyError
 
-ENCODING = "utf-8"
+log = logging.getLogger(__name__)
 
 BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 ALLOWED_SERIAL = r"^[0-9a-zA-Z\-_]+$"
 
 # character lists for the identifiers in the pin content policy
-CHARLIST_CONTENTPOLICY = {"c": string.ascii_letters, # characters
-                          "n": string.digits,        # numbers
-                          "s": string.punctuation}   # special
+CHARLIST_CONTENTPOLICY = {"c": string.ascii_letters,  # characters
+                          "n": string.digits,         # numbers
+                          "s": string.punctuation}    # special
+
+
+class AUTH_RESPONSE(object):
+    __doc__ = """The return value in "result->authentication".
+    CHALLENGE indicates the start of a challenge and
+    DECLINED indicates a declined challenge, which e.g. happens with PUSH tokens, if the user declines the
+    authentication request.
+    """
+    ACCEPT = "ACCEPT"
+    REJECT = "REJECT"
+    CHALLENGE = "CHALLENGE"
+    DECLINED = "DECLINED"
+
 
 def check_time_in_range(time_range, check_time=None):
     """
@@ -79,8 +93,8 @@ def check_time_in_range(time_range, check_time=None):
 
     :param time_range: The timerange
     :type time_range: basestring
-    :param time: The time to check
-    :type time: datetime
+    :param check_time: The time to check
+    :type check_time: datetime
     :return: True, if time is within time_range.
     """
     time_match = False
@@ -94,7 +108,7 @@ def check_time_in_range(time_range, check_time=None):
 
     check_time = check_time or datetime.now()
     check_day = check_time.isoweekday()
-    check_hour =dt_time(check_time.hour, check_time.minute)
+    check_hour = dt_time(check_time.hour, check_time.minute)
     # remove whitespaces
     time_range = ''.join(time_range.split())
     # split into list of time ranges
@@ -112,13 +126,13 @@ def check_time_in_range(time_range, check_time=None):
             ts = [int(x) for x in t_start.split(":")]
             te = [int(x) for x in t_end.split(":")]
             if len(ts) == 2:
-                time_start =dt_time(ts[0], ts[1])
+                time_start = dt_time(ts[0], ts[1])
             else:
-                time_start =dt_time(ts[0])
+                time_start = dt_time(ts[0])
             if len(te) == 2:
-                time_end =dt_time(te[0], te[1])
+                time_end = dt_time(te[0], te[1])
             else:
-                time_end =dt_time(te[0])
+                time_end = dt_time(te[0])
 
             # check the day and the time
             if (dow_index.get(dow_start) <= check_day <= dow_index.get(dow_end)
@@ -135,6 +149,7 @@ def check_time_in_range(time_range, check_time=None):
 def to_utf8(password):
     """
     Convert a password to utf8
+
     :param password: A password that should be converted to utf8
     :type password: str or bytes
     :return: a utf8 encoded password
@@ -154,7 +169,7 @@ def to_utf8(password):
 def to_unicode(s, encoding="utf-8"):
     """
     Converts the string s to unicode if it is of type bytes.
-    
+
     :param s: the string to convert
     :type s: bytes or str
     :param encoding: the encoding to use (default utf8)
@@ -162,7 +177,7 @@ def to_unicode(s, encoding="utf-8"):
     :return: unicode string
     :rtype: str
     """
-    if isinstance(s, six.text_type):
+    if isinstance(s, str):
         return s
     elif isinstance(s, bytes):
         return s.decode(encoding)
@@ -181,7 +196,7 @@ def to_bytes(s):
     """
     if isinstance(s, bytes):
         return s
-    elif isinstance(s, six.text_type):
+    elif isinstance(s, str):
         return s.encode('utf8')
     # TODO: warning? Exception?
     return s
@@ -197,7 +212,7 @@ def to_byte_string(value):
     :return: byte string representing the value
     :rtype: bytes
     """
-    if not isinstance(value, (bytes, six.string_types)):
+    if not isinstance(value, (bytes, str)):
         value = str(value)
     value = to_bytes(value)
     return value
@@ -212,7 +227,7 @@ def hexlify_and_unicode(s):
     :rtype: str
     """
 
-    res = to_unicode(binascii.hexlify(to_bytes(s)))
+    res = binascii.hexlify(to_bytes(s)).decode('utf-8')
     return res
 
 
@@ -220,12 +235,13 @@ def b32encode_and_unicode(s):
     """
     Base32-encode a str (which is first encoded to UTF-8)
     or a byte string and return the result as a str.
+
     :param s: str or bytes to base32-encode
     :type s: str or bytes
     :return: base32-encoded string converted to unicode
     :rtype: str
     """
-    res = to_unicode(base64.b32encode(to_bytes(s)))
+    res = base64.b32encode(to_bytes(s)).decode('utf-8')
     return res
 
 
@@ -233,12 +249,13 @@ def b64encode_and_unicode(s):
     """
     Base64-encode a str (which is first encoded to UTF-8)
     or a byte string and return the result as a str.
+
     :param s: str or bytes to base32-encode
     :type s: str or bytes
     :return: base64-encoded string converted to unicode
     :rtype: str
     """
-    res = to_unicode(base64.b64encode(to_bytes(s)))
+    res = base64.b64encode(to_bytes(s)).decode('utf-8')
     return res
 
 
@@ -246,58 +263,28 @@ def urlsafe_b64encode_and_unicode(s):
     """
     Base64-urlsafe-encode a str (which is first encoded to UTF-8)
     or a byte string and return the result as a str.
+
     :param s: str or bytes to base32-encode
     :type s: str or bytes
     :return: base64-encoded string converted to unicode
     :rtype: str
     """
-    res = to_unicode(base64.urlsafe_b64encode(to_bytes(s)))
+    res = base64.urlsafe_b64encode(to_bytes(s)).decode('utf-8')
     return res
 
 
-def create_png(data, alt=None):
-    img = qrcode.make(data)
-
-    output = BytesIO()
-    img.save(output)
-    o_data = output.getvalue()
-    output.close()
-
-    return o_data
-
-
-def create_img(data, width=0, alt=None, raw=False):
+def create_img(data, scale=10):
     """
-    create the qr image data
+    create the qr PNG image data URI
 
     :param data: input data that will be munched into the qrcode
     :type data: str
-    :param width: image width in pixel
-    :type width: int
-    :param raw: If set to false, the data will be interpreted as text and a
-        QR code will be generated.
-
-    :return: image data to be used in an <img> tag
-    :rtype:  str
+    :param scale: Scaling of the final PNG image
+    :type scale: int
+    :return: PNG data URI to be used in an <img> tag
+    :rtype: str
     """
-    width_str = ''
-    alt_str = ''
-
-    if not raw:
-        o_data = create_png(data, alt=alt)
-    else:
-        o_data = data
-    data_uri = b64encode_and_unicode(o_data)
-
-    if width != 0:
-        width_str = " width={0:d} ".format((int(width)))
-
-    if alt is not None:
-        val = urlencode({'alt': alt})
-        alt_str = " alt={0!r} ".format((val[len('alt='):]))
-
-    ret_img = u'data:image/png;base64,{0!s}'.format(data_uri)
-    return ret_img
+    return segno.make_qr(data).png_data_uri(scale=scale)
 
 
 #
@@ -318,7 +305,7 @@ def modhex_encode(s):
     :return: the encoded string
     :rtype: str
     """
-    return u''.join([hex2ModDict[c] for c in hexlify_and_unicode(s)])
+    return ''.join([hex2ModDict[c] for c in hexlify_and_unicode(s)])
 
 
 def modhex_decode(m):
@@ -343,7 +330,7 @@ def checksum(msg):
     :rtype: int
     """
     crc = 0xffff
-    for b in six.iterbytes(msg):
+    for b in msg:
         crc = crc ^ (b & 0xff)
         for _j in range(0, 8):
             n = crc & 1
@@ -360,6 +347,7 @@ def decode_base32check(encoded_data, always_upper=True):
         strip_padding(base32(sha1(payload)[:4] + payload))
 
     Raise a ParameterError if the encoded payload is malformed.
+
     :param encoded_data: The base32 encoded data.
     :type encoded_data: str
     :param always_upper: If we should convert lowercase to uppercase
@@ -373,19 +361,17 @@ def decode_base32check(encoded_data, always_upper=True):
     encoded_length = len(encoded_data)
     if encoded_length % 8 != 0:
         encoded_data += "=" * (8 - (encoded_length % 8))
-    assert len(encoded_data) % 8 == 0
     # Decode as base32
     try:
         decoded_data = base64.b32decode(encoded_data)
-    except (TypeError, binascii.Error, OverflowError):
-        # Python 3.6.7: b32decode throws a binascii.Error when the padding is wrong
-        # Python 3.6.3 (travis): b32decode throws an OverflowError when the padding is wrong
+    except (TypeError, binascii.Error):
+        # b32decode throws a binascii.Error when the padding is wrong
         raise ParameterError("Malformed base32check data: Invalid base32")
     # Extract checksum and payload
     if len(decoded_data) < 4:
         raise ParameterError("Malformed base32check data: Too short")
     checksum, payload = decoded_data[:4], decoded_data[4:]
-    payload_hash = hashlib.sha1(payload).digest()
+    payload_hash = hashlib.sha1(payload).digest()  # nosec B324 # used as checksum for 2step enrollment
     if payload_hash[:4] != checksum:
         raise ParameterError("Malformed base32check data: Incorrect checksum")
     return hexlify_and_unicode(payload)
@@ -472,6 +458,7 @@ def parse_timelimit(limit):
     one in three hours.
 
     It returns a tuple the number and the timedelta.
+
     :param limit: a timelimit
     :type limit: basestring
     :return: tuple of number and timedelta
@@ -505,7 +492,7 @@ def parse_date(date_string):
     in the future.
 
     It can also parse fixed date_strings like
-    
+
       23.12.2016 23:30
       23.12.2016
       2016/12/23 11:30pm
@@ -583,7 +570,7 @@ def parse_proxy(proxy_settings):
         for proxy in proxies_list:
             p_list = proxy.split(">")
             if len(p_list) > 1:
-                proxypath = tuple(IPNetwork(proxynet) for proxynet in p_list)
+                proxypath = tuple(IPNetwork(proxynet.strip()) for proxynet in p_list)
             else:
                 # No mapping client, so we take the whole network
                 proxypath = (IPNetwork(p_list[0]), IPNetwork("0.0.0.0/0"))
@@ -633,14 +620,14 @@ def check_proxy(path_to_client, proxy_settings):
     #   as the proxy path does not match completely because 10.2.3.4 is not allowed to map to 192.168.1.1.
     # After having processed all paths in the proxy settings, we return the "deepest" IP from ``path_to_client`` that
     # is allowed according to any proxy path of the proxy settings.
-    log.debug(u"Determining the mapped IP from {!r} given the proxy settings {!r} ...".format(
+    log.debug("Determining the mapped IP from {!r} given the proxy settings {!r} ...".format(
         path_to_client, proxy_settings))
     max_idx = 0
     for proxy_path in proxy_dict:
-        log.debug(u"Proxy path: {!r}".format(proxy_path))
+        log.debug("Proxy path: {!r}".format(proxy_path))
         # If the proxy path contains more subnets than the path to the client, we already know that it cannot match.
         if len(proxy_path) > len(path_to_client):
-            log.debug(u"... ignored because it is longer than the path to the client")
+            log.debug("... ignored because it is longer than the path to the client")
             continue
         # Hence, we can now be sure that len(path_to_client) >= len(proxy_path).
         current_max_idx = 0
@@ -650,7 +637,7 @@ def check_proxy(path_to_client, proxy_settings):
             # We check if the network in the proxy path contains the IP from path_to_client.
             if client_path_ip not in proxy_path_ip:
                 # If not, the current proxy path does not match and we do not have to keep checking it.
-                log.debug(u"... ignored because {!r} is not in subnet {!r}".format(client_path_ip, proxy_path_ip))
+                log.debug("... ignored because {!r} is not in subnet {!r}".format(client_path_ip, proxy_path_ip))
                 break
             else:
                 current_max_idx = idx
@@ -658,10 +645,10 @@ def check_proxy(path_to_client, proxy_settings):
             # This branch is only executed if we did *not* break out of the loop. This means that the proxy path
             # completely matches the path to client, so the mapped client IP is a viable candidate.
             if current_max_idx >= max_idx:
-                log.debug(u"... setting new candidate for client IP: {!r}".format(path_to_client[current_max_idx]))
+                log.debug("... setting new candidate for client IP: {!r}".format(path_to_client[current_max_idx]))
             max_idx = max(max_idx, current_max_idx)
 
-    log.debug(u"Determined mapped client IP: {!r}".format(path_to_client[max_idx]))
+    log.debug("Determined mapped client IP: {!r}".format(path_to_client[max_idx]))
     return path_to_client[max_idx]
 
 
@@ -709,6 +696,7 @@ def get_client_ip(request, proxy_settings):
         # If no proxy settings are defined, we do not map any IPs anyway.
         return request.remote_addr
 
+
 def check_ip_in_policy(client_ip, policy):
     """
     This checks, if the given client IP is contained in a list like
@@ -727,7 +715,7 @@ def check_ip_in_policy(client_ip, policy):
         if ipdef[0] in ['-', '!']:
             # exclude the client?
             if IPAddress(client_ip) in IPNetwork(ipdef[1:]):
-                log.debug(u"the client {0!s} is excluded by {1!s}".format(client_ip, ipdef))
+                log.debug("the client {0!s} is excluded by {1!s}".format(client_ip, ipdef))
                 client_excluded = True
         elif IPAddress(client_ip) in IPNetwork(ipdef):
             client_found = True
@@ -773,7 +761,7 @@ def reduce_realms(all_realms, policies):
     """
     This function reduces the realm list based on the policies
     If there is a policy, that acts for all realms, all realms are returned.
-    Otherwise only realms are returned, that are contained in the policies.
+    Otherwise, only realms are returned, that are contained in the policies.
     """
     realms = {}
     if not policies:
@@ -798,6 +786,7 @@ def reduce_realms(all_realms, policies):
 def is_true(value):
     """
     Returns True is the value is 1, "1", True or "true"
+
     :param value: string or integer
     :return: Boolean
     """
@@ -833,7 +822,7 @@ def compare_condition(condition, value):
             return value == int(condition)
 
     except ValueError:
-        log.warning(u"Invalid condition {0!s}. Needs to contain an integer.".format(condition))
+        log.warning("Invalid condition {0!s}. Needs to contain an integer.".format(condition))
         return False
 
 
@@ -841,14 +830,14 @@ def compare_value_value(value1, comparator, value2):
     """
     This function compares value1 and value2 with the comparator.
     The comparator may be "==", "=", "!=", ">", "<", ">=", "=>", "<=" or "=<".
-    
+
     If the values can be converted to integers or dates, they are compared as such,
     otherwise as strings.
 
     In case of dates make sure they can be parsed by 'parse_date()', otherwise
     they will be compared as strings.
 
-    :param value1: First value 
+    :param value1: First value
     :param value2: Second value
     :param comparator: The comparator
     :return: True or False
@@ -928,7 +917,7 @@ def int_to_hex(serial):
     """
     serial_hex = hex(int(serial)).upper()
     serial_hex = serial_hex.split("X")[1]
-    if len(serial_hex)%2 != 0:
+    if len(serial_hex) % 2 != 0:
         serial_hex = "0" + serial_hex
     return serial_hex
 
@@ -937,15 +926,16 @@ def parse_legacy_time(ts, return_date=False):
     """
     The new timestrings are of the format YYYY-MM-DDThh:mm+oooo.
     They contain the timezone offset!
-    
-    Old legacy time strings are of format DD/MM/YY hh:mm without time zone 
+
+    Old legacy time strings are of format DD/MM/YY hh:mm without time zone
     offset.
-    
-    This function parses string and returns the new formatted time string 
+
+    This function parses string and returns the new formatted time string
     including the timezone offset.
-    :param timestring: 
+
+    :param ts:
     :param return_date: If set to True a date is returned instead of a string
-    :return: 
+    :return:
     """
     from privacyidea.lib.tokenclass import DATE_FORMAT
     d = parse_date_string(ts)
@@ -953,7 +943,7 @@ def parse_legacy_time(ts, return_date=False):
         # we need to reparse the string
         d = parse_date_string(ts,
                               dayfirst=re.match(r"^\d\d[/\.]", ts)).replace(
-                                  tzinfo=tzlocal())
+            tzinfo=tzlocal())
     if return_date:
         return d
     else:
@@ -964,9 +954,9 @@ def parse_timedelta(s):
     """
     parses a string like +5d or -30m and returns a timedelta.
     Allowed identifiers are s, m, h, d, y.
-    
+
     :param s: a string like +30m or -5d
-    :return: timedelta 
+    :return: timedelta
     """
     seconds = 0
     minutes = 0
@@ -975,7 +965,7 @@ def parse_timedelta(s):
     m = re.match(r"\s*([+-]?)\s*(\d+)\s*([smhdy])\s*$", s)
     if not m:
         log.warning("Unsupported timedelta: {0!r}".format(s))
-        raise Exception("Unsupported timedelta")
+        raise TypeError(f"Unsupported timedelta {s!r}")
     count = int(m.group(2))
     if m.group(1) == "-":
         count = - count
@@ -994,19 +984,37 @@ def parse_timedelta(s):
     return td
 
 
+def parse_time_sec_int(s):
+    """
+    parses a string like 5d or 24h into an int with gives the time in sec. You can use y, d, h, m and s.
+
+    :param s: time string like 5d or 24h
+    :type s: str or int
+    :return: time in seconds as an integer value
+    :rtype: int
+    """
+    try:
+        td = parse_timedelta(s)
+        ret = abs(td).total_seconds()
+    except TypeError as _e:
+        # parse_timedelta() does not accept int values
+        ret = s
+    return int(ret)
+
+
 def parse_time_offset_from_now(s):
     """
     Parses a string as used in the token event handler
         "New date {now}+5d. Some {other} {tags}" or
         "New date {now}-30m! Some {other} {tags}".
-    This returns the string "New date {now}. Some {other} {tags}" and the 
+    This returns the string "New date {now}. Some {other} {tags}" and the
     timedelta of 5 days.
     Allowed tags are {now} and {current_time}. Only one tag of {now} or {
     current_time} is allowed.
     Allowed offsets are "s": seconds, "m": minutes, "h": hours, "d": days.
-        
+
     :param s: The string to be parsed.
-    :return: tuple of modified string and timedelta 
+    :return: tuple of modified string and timedelta
     """
     td = timedelta()
     m1 = re.search(r"(^.*{current_time})([+-]\d+[smhd])(.*$)", s)
@@ -1050,21 +1058,23 @@ def convert_column_to_unicode(value):
     """
     Helper function for models. If ``value`` is None or a unicode object, do nothing.
     Otherwise, convert it to a unicode object.
+
     :param value: the string to convert
     :type value: str
     :return: a unicode object or None
     """
-    if value is None or isinstance(value, six.text_type):
+    if value is None or isinstance(value, str):
         return value
     elif isinstance(value, bytes):
         return value.decode('utf8')
     else:
-        return six.text_type(value)
+        return str(value)
 
 
 def convert_timestamp_to_utc(timestamp):
     """
     Convert a timezone-aware datetime object to a naive UTC datetime.
+
     :param timestamp: datetime object that should be converted
     :type timestamp: timezone-aware datetime object
     :return: timezone-naive datetime object
@@ -1095,7 +1105,7 @@ def fetch_one_resource(table, **query):
     try:
         return table.query.filter_by(**query).one()
     except sqlalchemy.orm.exc.NoResultFound:
-        raise ResourceNotFoundError(u"The requested {!s} could not be found.".format(table.__name__))
+        raise ResourceNotFoundError("The requested {!s} could not be found.".format(table.__name__))
 
 
 def truncate_comma_list(data, max_len):
@@ -1115,7 +1125,7 @@ def truncate_comma_list(data, max_len):
     if len(data) >= max_len:
         r = ",".join(data)[:max_len]
         # Also mark this string
-        r = u"{0!s}+".format(r[:-1])
+        r = "{0!s}+".format(r[:-1])
         return r
 
     while len(",".join(data)) > max_len:
@@ -1124,7 +1134,7 @@ def truncate_comma_list(data, max_len):
         for d in data:
             if d == longest:
                 # Shorten the longest and mark with "+"
-                d = u"{0!s}+".format(d[:-2])
+                d = "{0!s}+".format(d[:-2])
             new_data.append(d)
         data = new_data
     return ",".join(data)
@@ -1219,11 +1229,7 @@ def get_module_class(package_name, class_name, check_method=None):
     helper method to load the Module class from a given
     package in literal.
 
-    :param package_name: literal of the Module
-    :param class_name: Name of the class in the module
-    :param check_method: Name of the method to check, if this would be the right class
-
-    example:
+    example::
 
         get_module_class("privacyidea.lib.auditmodules.sqlaudit", "Audit", "log")
 
@@ -1233,15 +1239,18 @@ def get_module_class(package_name, class_name, check_method=None):
         checks, if the method exists
         if not an error is thrown
 
+    :param package_name: literal of the Module
+    :param class_name: Name of the class in the module
+    :param check_method: Name of the method to check, if this would be the right class
     """
     mod = import_module(package_name)
     if not hasattr(mod, class_name):
-        raise ImportError(u"{0} has no attribute {1}".format(package_name, class_name))
+        raise ImportError("{0} has no attribute {1}".format(package_name, class_name))
     klass = getattr(mod, class_name)
     log.debug("klass: {0!s}".format(klass))
     if check_method and not hasattr(klass, check_method):
-        raise NameError(u"Class AttributeError: {0}.{1} "
-                        u"instance has no attribute '{2}'".format(package_name, class_name, check_method))
+        raise NameError("Class AttributeError: {0}.{1} "
+                        "instance has no attribute '{2}'".format(package_name, class_name, check_method))
     return klass
 
 
@@ -1251,16 +1260,16 @@ def get_version_number():
     """
     version = "unknown"
     try:
-        version = importlib_metadata.version("privacyidea")
-    except:
-        log.info("We are not able to determine the privacyidea version number.")
+        version = metadata.version("privacyidea")
+    except metadata.PackageNotFoundError as e:
+        log.info(f"We are not able to determine the privacyidea version number: {e}")
     return version
 
 
 def get_version():
     """
     This returns the version, that is displayed in the WebUI and
-    self service portal.
+    self-service portal.
     """
     version = get_version_number()
     return "privacyIDEA {0!s}".format(version)
@@ -1287,22 +1296,20 @@ def prepare_result(obj, rid=1, details=None):
            "versionnumber": get_version_number(),
            "id": rid,
            "time": time.time()}
-
     if details is not None and len(details) > 0:
         details["threadid"] = threading.current_thread().ident
         res["detail"] = details
 
-    # Fix for sending an information about challenge response
-    # TODO: Make this default, when we move from the binary result->value to
-    #       more states in version 4.0
     if rid > 1:
         if obj:
-            r_authentication = "ACCEPT"
+            r_authentication = AUTH_RESPONSE.ACCEPT
         elif not obj and details.get("multi_challenge"):
             # We have a challenge authentication
-            r_authentication = "CHALLENGE"
+            r_authentication = AUTH_RESPONSE.CHALLENGE
+        elif not obj and (details.get("challenge_status") == "declined"):
+            r_authentication = AUTH_RESPONSE.DECLINED
         else:
-            r_authentication = "REJECT"
+            r_authentication = AUTH_RESPONSE.REJECT
         res["result"]["authentication"] = r_authentication
 
     return res
@@ -1311,8 +1318,9 @@ def prepare_result(obj, rid=1, details=None):
 def split_pin_pass(passw, otplen, prependpin):
     """
     Split a given password based on the otp length and prepend pin
+
     :param passw: The password like test123456 or 123456test
-    :type pass: str
+    :type passw: str
     :param otplen: The length of the otp value
     :param prependpin: The password is either in front or after the otp value
     :return:
@@ -1320,13 +1328,11 @@ def split_pin_pass(passw, otplen, prependpin):
     if prependpin:
         pin = passw[0:-otplen]
         otpval = passw[-otplen:]
-        log.debug("PIN prepended. PIN length is {0!s}, OTP length is {0!s}.".format(len(pin),
-                                                                                    len(otpval)))
+        log.debug(f"PIN prepended. PIN length is {len(pin)}, OTP length is {len(otpval)}.")
     else:
         pin = passw[otplen:]
         otpval = passw[0:otplen]
-        log.debug("PIN appended. PIN length is {0!s}, OTP length is {0!s}.".format(len(pin),
-                                                                                   len(otpval)))
+        log.debug(f"PIN appended. PIN length is {len(pin)}, OTP length is {len(otpval)}.")
     return pin, otpval
 
 
@@ -1335,17 +1341,19 @@ def create_tag_dict(logged_in_user=None,
                     serial=None,
                     tokenowner=None,
                     tokentype=None,
+                    tokendescription=None,
                     recipient=None,
                     registrationcode=None,
                     googleurl_value=None,
                     client_ip=None,
                     pin=None,
+                    challenge=None,
                     escape_html=False):
     """
     This helper function creates a dictionary with tags to be used in sending emails
     either with email tokens or within the notification handler
 
-    :param logged_in_user: The acting logged in user (admin)
+    :param logged_in_user: The acting logged-in user (admin)
     :param request: The HTTP request object
     :param serial: The serial number of the token
     :param tokenowner: The owner of the token
@@ -1354,9 +1362,11 @@ def create_tag_dict(logged_in_user=None,
     :param recipient: The recipient
     :type recipient: dictionary with "givenname" and "surname"
     :param registrationcode: The registration code of a token
+    :param tokendescription: The description of the token
     :param googleurl_value: The URL for the QR code during token enrollemnt
     :param client_ip: The IP of the client
-    :param pin: the PIN of a token
+    :param pin: The PIN of a token
+    :param challenge: The challenge data
     :param escape_html: Whether the values for the tags should be html escaped
     :return: The tag dictionary
     """
@@ -1370,10 +1380,11 @@ def create_tag_dict(logged_in_user=None,
                 url=request.url_root if request else "",
                 user=tokenowner.info.get("givenname") if tokenowner else "",
                 surname=tokenowner.info.get("surname") if tokenowner else "",
-                givenname=recipient.get("givenname"),
+                givenname=tokenowner.info.get("givenname") if tokenowner else "",
                 username=tokenowner.login if tokenowner else "",
                 userrealm=tokenowner.realm if tokenowner else "",
                 tokentype=tokentype,
+                tokendescription=tokendescription,
                 registrationcode=registrationcode,
                 recipient_givenname=recipient.get("givenname"),
                 recipient_surname=recipient.get("surname"),
@@ -1383,7 +1394,8 @@ def create_tag_dict(logged_in_user=None,
                 client_ip=client_ip,
                 pin=pin,
                 ua_browser=request.user_agent.browser if request else "",
-                ua_string=request.user_agent.string if request else "")
+                ua_string=request.user_agent.string if request else "",
+                challenge=challenge if challenge else "")
     if escape_html:
         escaped_tags = {}
         for key, value in tags.items():
@@ -1413,14 +1425,14 @@ def determine_logged_in_userparams(logged_in_user, params):
 
     If an administrator is acting, the "adminuser" and "adminrealm" are set from the logged_in_user
     information and the user parameters are taken from the request parameters.
-    Thus an admin can act on a user.
+    Thus, an admin can act on a user.
 
     If a user is acting, the adminuser and adminrealm are None, the username and userrealm are taken from
     the logged_in_user information.
 
-    :param logged_in_user: Logged in user dictionary.
+    :param logged_in_user: Logged-in user dictionary.
     :param params: Request parameters (all_data)
-    :return: Tupe of (scope, username, realm, adminuser, adminrealm)
+    :return: Tuple of (scope, username, realm, adminuser, adminrealm)
     """
     role = logged_in_user.get("role")
     username = logged_in_user.get("username")
@@ -1435,7 +1447,7 @@ def determine_logged_in_userparams(logged_in_user, params):
     elif role == "user":
         pass
     else:
-        raise PolicyError(u"Unknown role: {}".format(role))
+        raise PolicyError("Unknown role: {}".format(role))
 
     return role, username, realm, admin_user, admin_realm
 
@@ -1480,3 +1492,107 @@ def parse_string_to_dict(s, split_char=":"):
     values = [[x for x in y.split()] for y in packed_list[1::2]]
     d = {a: b for a, b in zip(keys, values)}
     return d
+
+
+def replace_function_event_handler(text, token_serial=None, tokenowner=None, logged_in_user=None):
+    if logged_in_user is not None:
+        login = logged_in_user.login
+        realm = logged_in_user.realm
+    else:
+        login = ""
+        realm = ""
+
+    if tokenowner is not None:
+        surname = tokenowner.info.get("surname")
+        givenname = tokenowner.info.get("givenname")
+        userrealm = tokenowner.realm
+    else:
+        surname = ""
+        givenname = ""
+        userrealm = ""
+
+    if token_serial is not None:
+        token_serial = token_serial
+    else:
+        token_serial = ""  # nosec B105 # Reset serial
+
+    try:
+        attributes = {
+            "logged_in_user": login,
+            "realm": realm,
+            "surname": surname,
+            "token_owner": givenname,
+            "user_realm": userrealm,
+            "token_serial": token_serial
+        }
+        new_text = text.format(**attributes)
+        return new_text
+    except(ValueError, KeyError) as err:
+        log.warning("Unable to replace placeholder: ({0!s})! Please check the webhooks data option.".format(err))
+        return text
+
+
+def convert_imagefile_to_dataimage(imagepath):
+    """
+    This helper reads an image file and converts it to a dataimage string,
+    that can be directly used in HTML pages.
+
+    :param imagepath:
+    :return: A dataimage as string
+    """
+    try:
+        mime, _ = mimetypes.guess_type(imagepath)
+        if not mime:
+            log.warning("Unknown file type in file {0!s}.".format(imagepath))
+            return ""
+        with open(imagepath, "rb") as f:
+            data = f.read()
+            data64 = base64.b64encode(data)
+        return "data:{0!s};base64,{1!s}".format(mime, to_unicode(data64))
+    except FileNotFoundError:
+        log.warning("The file {0!s} could not be found.".format(imagepath))
+        return ""
+
+
+ua_re = re.compile(r'^(?P<agent>[a-zA-Z0-9_-]+)(/(?P<version>\d+[\d.]*))?(\s(?P<comment>.*))?')
+
+
+def get_plugin_info_from_useragent(useragent):
+    """
+    This gives you the plugin name and version from an useragent string.
+    See https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/User-Agent for
+    more information on the user-agent string
+
+    :param useragent: useragent string like 'NameOfPlugin/VersionOfPlugin NameOfApplication/VersionOfApplication'
+    :type useragent: str
+    :return: a tuple with (NameOfPlugin, VersionOfPlugin, Comment). For example: ('ExamplePlugin', 1.0, '')
+    :rtype: tuple
+    """
+    if not useragent:
+        log.info("No user-agent string given")
+        return "", None, None
+    ua_match = ua_re.match(useragent)
+    if ua_match:
+        return ua_match.group('agent'), ua_match.group('version'), ua_match.group('comment')
+    else:
+        log.info(f"Could not match user-agent string: {useragent}")
+        return "", None, None
+
+
+def get_computer_name_from_user_agent(user_agent):
+    """
+    Searches for entries in the user agent that could identify the machine.
+    It is expected that the string following the key does not contain whitespaces.
+    Example: ComputerName/Laptop-3324231
+
+    :param user_agent: The user agent string
+    :type user_agent: str
+    :return: The computer name or None if nothing is found
+    :rtype: str or None
+    """
+    keys = ["ComputerName", "Hostname", "MachineName", "Windows", "Linux", "Mac"]
+    if user_agent:
+        for key in keys:
+            if key in user_agent:
+                return user_agent.split(key + "/")[1].split(" ")[0]
+    return None

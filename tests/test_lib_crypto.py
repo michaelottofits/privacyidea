@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 This test file tests the lib.crypto and lib.security.default
 """
@@ -23,7 +22,7 @@ from privacyidea.lib.security.default import (SecurityModule,
 from privacyidea.lib.security.aeshsm import AESHardwareSecurityModule
 
 from flask import current_app
-from six import text_type
+import PyKCS11
 from PyKCS11 import PyKCS11Error
 import string
 import passlib.hash
@@ -67,16 +66,26 @@ class SecurityModuleTestCase(MyTestCase):
         hsm = DefaultSecurityModule({"file": config.get("PI_ENCFILE")})
 
         cipher = hsm.encrypt(b"data", b"iv12345678901234")
+        self.assertEqual(binascii.b2a_hex(cipher), b"ac17c4a5aa8703d7129c09158adc5fd4")
         text = hsm.decrypt(cipher, b"iv12345678901234")
         self.assertEqual(text, b"data")
 
-        cipher = hsm.encrypt_pin(u"pin")
-        text = hsm.decrypt_pin(cipher)
-        self.assertEqual(text, u"pin")
+        # check that we can decrypt values with default PKCS7 padding
+        iv = b'1234567890abcdef'
+        pkcs7_cipher = '98d005d6f87c01f1719199bc3df1beb8'
+        legacy_cipher = 'bbcaff52640f9dc90be1c4e1df8a70b55a1194cc67d155722054317901e3646a'
+        self.assertEqual(b'Hallo Welt', hsm.decrypt(binascii.unhexlify(pkcs7_cipher), iv))
 
-        cipher = hsm.encrypt_password(u"password")
+        # check that we can decrypt values with legacy padding
+        self.assertEqual(b'Hallo Welt', hsm.decrypt(binascii.unhexlify(legacy_cipher), iv))
+
+        cipher = hsm.encrypt_pin("pin")
+        text = hsm.decrypt_pin(cipher)
+        self.assertEqual(text, "pin")
+
+        cipher = hsm.encrypt_password("password")
         text = hsm.decrypt_password(cipher)
-        self.assertEqual(text, u"password")
+        self.assertEqual(text, "password")
 
     def test_06_password_encrypt_decrypt(self):
         res = DefaultSecurityModule.password_encrypt("secrettext", "password1")
@@ -158,16 +167,16 @@ class CryptoTestCase(MyTestCase):
         self.assertEqual(decryptPin(pin3), '1234')
 
     def test_01_encrypt_decrypt_pass(self):
-        r = encryptPassword(u"passwörd".encode('utf8'))
+        r = encryptPassword("passwörd".encode('utf8'))
         # encryptPassword returns unicode
-        self.assertTrue(isinstance(r, text_type))
+        self.assertTrue(isinstance(r, str))
         pin = decryptPassword(r)
         # decryptPassword always returns unicode
-        self.assertEqual(pin, u"passwörd")
+        self.assertEqual(pin, "passwörd")
 
-        r = encryptPassword(u"passwörd")
+        r = encryptPassword("passwörd")
         pin = decryptPassword(r)
-        self.assertEqual(pin, u"passwörd")
+        self.assertEqual(pin, "passwörd")
 
         # decrypt some passwords generated with 2.23
         pw1 = '3d1bf9db4c75469b4bb0bc7c70133181:2c27ac3839ed2213b8399d0471b17136'
@@ -175,7 +184,7 @@ class CryptoTestCase(MyTestCase):
         pw2 = '3a1be65a234f723fe5c6969b818582e1:08e51d1c65aa74c4988d094c40cb972c'
         self.assertEqual(decryptPassword(pw2), 'test123')
         pw3 = '7a4d5e2f26978394e33715bc3e8188a3:90b2782112ad7bbc5b48bd10e5c7c096cfe4ef7d9d11272595dc5b6c7f21d98a'
-        self.assertEqual(decryptPassword(pw3, ), u'passwörd')
+        self.assertEqual(decryptPassword(pw3, ), 'passwörd')
 
         # TODO: add checks for broken paddings/encrypted values and malformed enc_data
 
@@ -235,7 +244,7 @@ class CryptoTestCase(MyTestCase):
         d = decrypt(binascii.unhexlify(c), iv)
         self.assertEqual(data, d)
 
-        s = u"Encryption Text with unicode chars: äöü"
+        s = "Encryption Text with unicode chars: äöü"
         c = encrypt(s, iv)
         d = decrypt(binascii.unhexlify(c), iv)
         self.assertEqual(s, d.decode('utf8'))
@@ -243,7 +252,7 @@ class CryptoTestCase(MyTestCase):
         # TODO: add checks for broken paddings/encrypted values and malformed enc_data
 
         # check some data generated with 2.23
-        s = u'passwörd'.encode('utf8')
+        s = 'passwörd'.encode('utf8')
         iv_hex = 'cd5245a2875007d30cc049c2e7eca0c5'
         enc_data_hex = '7ea55168952b33131077f4249cf9e52b5f2b572214ace13194c436451fe3788c'
         self.assertEqual(s, decrypt(binascii.unhexlify(enc_data_hex),
@@ -260,7 +269,7 @@ class CryptoTestCase(MyTestCase):
     def test_05_encode_decode(self):
         b_str = b'Hello World'
         self.assertEqual(to_unicode(b_str), b_str.decode('utf8'))
-        u_str = u'Hello Wörld'
+        u_str = 'Hello Wörld'
         self.assertEqual(to_unicode(u_str), u_str)
         self.assertEqual(to_bytes(b_str), b_str)
         self.assertEqual(to_bytes(u_str), u_str.encode('utf8'))
@@ -311,8 +320,8 @@ class RandomTestCase(MyTestCase):
         self.assertTrue(len(r) == 2, r)
         r = get_rand_digit_str(1001)
         self.assertTrue(len(r) == 1001, r)
-        r = get_rand_digit_str(19182)
-        self.assertTrue(len(r) == 19182)
+        r = get_rand_digit_str(2500)
+        self.assertTrue(len(r) == 2500)
 
     def test_05_get_alphanum_str(self):
         r = get_alphanum_str(20)
@@ -435,19 +444,22 @@ class AESHardwareSecurityModuleTestCase(MyTestCase):
 
             # simulate that encryption succeeds after five tries
             password = "topSekr3t" * 16
-            with pkcs11.simulate_failure(pkcs11.session_mock.encrypt, 5):
+            with pkcs11.simulate_failure(pkcs11.session_mock.encrypt, 5,
+                                         error=PyKCS11.CKR_SESSION_HANDLE_INVALID):
                 encrypted = hsm.encrypt_password(password)
                 # the session has been opened initially, and five times after that
                 self.assertEqual(pkcs11.mock.openSession.mock_calls, [call(slot=1)] * 6)
 
             # simulate that decryption succeeds after five tries
-            with pkcs11.simulate_failure(pkcs11.session_mock.decrypt, 5):
+            with pkcs11.simulate_failure(pkcs11.session_mock.decrypt, 5,
+                                         error=PyKCS11.CKR_SESSION_HANDLE_INVALID):
                 self.assertEqual(hsm.decrypt_password(encrypted), password)
                 # the session has been opened initially, five times during encryption, and five times now
                 self.assertEqual(pkcs11.mock.openSession.mock_calls, [call(slot=1)] * 11)
 
             # simulate that random generation succeeds after five tries
-            with pkcs11.simulate_failure(pkcs11.session_mock.generateRandom, 5):
+            with pkcs11.simulate_failure(pkcs11.session_mock.generateRandom, 5,
+                                         error=PyKCS11.CKR_SESSION_HANDLE_INVALID):
                 self.assertEqual(hsm.random(4), b"\x00\x01\x02\x03")
                 self.assertEqual(pkcs11.mock.openSession.mock_calls, [call(slot=1)] * 16)
 
@@ -469,11 +481,17 @@ class AESHardwareSecurityModuleTestCase(MyTestCase):
 
             # simulate that encryption still fails after five tries
             password = "topSekr3t" * 16
-            with pkcs11.simulate_failure(pkcs11.session_mock.encrypt, 6):
+            with pkcs11.simulate_failure(pkcs11.session_mock.encrypt, 6,
+                                         error=PyKCS11.CKR_SESSION_HANDLE_INVALID):
                 with self.assertRaises(HSMException):
                     hsm.encrypt_password(password)
                 # the session has been opened initially, and six times after that
                 self.assertEqual(pkcs11.mock.openSession.mock_calls, [call(slot=1)] * 7)
+
+            with pkcs11.simulate_failure(pkcs11.session_mock.encrypt, 1,
+                                         error=PyKCS11.CKR_ARGUMENTS_BAD):
+                with self.assertRaises(HSMException):
+                    hsm.encrypt_password(password)
 
     def test_05_hsm_recovery(self):
         with PKCS11Mock() as pkcs11:
@@ -498,7 +516,8 @@ class AESHardwareSecurityModuleTestCase(MyTestCase):
 
             # simulate that the HSM disappears after that, so we cannot
             # even open a session
-            with pkcs11.simulate_failure(pkcs11.session_mock.generateRandom, 1), \
+            with pkcs11.simulate_failure(pkcs11.session_mock.generateRandom, 1,
+                                         error=PyKCS11.CKR_SESSION_HANDLE_INVALID), \
                     pkcs11.simulate_failure(pkcs11.mock.openSession, 1):
                 with self.assertRaises(PyKCS11Error):
                     hsm.encrypt_password(password)
@@ -508,7 +527,8 @@ class AESHardwareSecurityModuleTestCase(MyTestCase):
             # but we can recover from it!
             # simulate one failure, because this will make the security module
             # acquire a new session
-            with pkcs11.simulate_failure(pkcs11.session_mock.generateRandom, 1):
+            with pkcs11.simulate_failure(pkcs11.session_mock.generateRandom, 1,
+                                         error=PyKCS11.CKR_SESSION_HANDLE_INVALID):
                 crypted = hsm.encrypt_password(password)
             text = hsm.decrypt_password(crypted)
             self.assertEqual(text, password)

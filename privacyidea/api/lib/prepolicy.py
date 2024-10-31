@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2020-01-28 Jean-Pierre Höhmann <jean-pierre.hoehmann@netknights.it>
 #             Add WebAuthn token
 #  2019-02-10 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -68,8 +66,9 @@ The functions of this module are tested in tests/test_api_lib_policy.py
 import logging
 
 from OpenSSL import crypto
-
-from privacyidea.lib.error import PolicyError, RegistrationError, TokenAdminError, ResourceNotFoundError
+from privacyidea.lib import _
+from privacyidea.lib.container import get_container_realms
+from privacyidea.lib.error import PolicyError, RegistrationError, TokenAdminError, ResourceNotFoundError, ParameterError
 from flask import g, current_app
 from privacyidea.lib.policy import SCOPE, ACTION, REMOTE_USER
 from privacyidea.lib.policy import Match, check_pin
@@ -82,9 +81,12 @@ from privacyidea.lib.utils import (parse_timedelta, is_true, generate_charlists_
 from privacyidea.lib.crypto import generate_password
 from privacyidea.lib.auth import ROLE
 from privacyidea.api.lib.utils import getParam, attestation_certificate_allowed, is_fqdn
+from privacyidea.api.lib.policyhelper import get_init_tokenlabel_parameters, get_pushtoken_add_config
 from privacyidea.lib.clientapplication import save_clientapplication
 from privacyidea.lib.config import (get_token_class)
 from privacyidea.lib.tokenclass import ROLLOUTSTATE
+from privacyidea.lib.tokens.certificatetoken import ACTION as CERTIFICATE_ACTION
+from privacyidea.lib.token import get_one_token
 import functools
 import jwt
 import re
@@ -97,7 +99,8 @@ from privacyidea.lib.tokens.webauthn import (WebAuthnRegistrationResponse,
                                              ATTESTATION_FORMS)
 from privacyidea.lib.tokens.webauthntoken import (WEBAUTHNACTION,
                                                   DEFAULT_PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE,
-                                                  PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE_OPTIONS,
+                                                  PUBLIC_KEY_CREDENTIAL_ALGORITHMS,
+                                                  PUBKEY_CRED_ALGORITHMS_ORDER,
                                                   DEFAULT_TIMEOUT, DEFAULT_ALLOWED_TRANSPORTS,
                                                   DEFAULT_USER_VERIFICATION_REQUIREMENT,
                                                   DEFAULT_AUTHENTICATOR_ATTESTATION_LEVEL,
@@ -115,6 +118,8 @@ log = logging.getLogger(__name__)
 optional = True
 required = False
 
+DEFAULT_JWT_VALIDITY = 3600
+
 
 class prepolicy(object):
     """
@@ -124,6 +129,7 @@ class prepolicy(object):
     A prepolicy decorator then will modify the request data or raise an
     exception
     """
+
     def __init__(self, function, request, action=None):
         """
         :param function: This is the policy function the is to be called
@@ -140,7 +146,7 @@ class prepolicy(object):
         This decorates the given function. The prepolicy decorator is ment
         for API functions on the API level.
 
-        If some error occur the a PolicyException is raised.
+        If some error occurs, a PolicyException is raised.
 
         The decorator function can modify the request data.
 
@@ -148,6 +154,7 @@ class prepolicy(object):
         :type wrapped_function: API function
         :return: None
         """
+
         @functools.wraps(wrapped_function)
         def policy_wrapper(*args, **kwds):
             self.function(request=self.request,
@@ -169,7 +176,7 @@ def _generate_pin_from_policy(policy, size=6):
     charlists_dict = generate_charlists_from_pin_policy(policy)
 
     pin = generate_password(size=size, characters=charlists_dict['base'],
-                      requirements=charlists_dict['requirements'])
+                            requirements=charlists_dict['requirements'])
     return pin
 
 
@@ -212,7 +219,7 @@ def set_random_pin(request=None, action=None):
 
         if len(pol_contents) == 1:
             log.info("Creating random OTP PIN with length {0!s} "
-                      "matching the contents policy {1!s}".format(list(pin_pols)[0], list(pol_contents)[0]))
+                     "matching the contents policy {1!s}".format(list(pin_pols)[0], list(pol_contents)[0]))
             # generate a pin which matches the contents requirement
             r = _generate_pin_from_policy(list(pol_contents)[0], size=int(list(pin_pols)[0]))
             request.all_data["pin"] = r
@@ -248,7 +255,7 @@ def init_random_pin(request=None, action=None):
 
         if len(pol_contents) == 1:
             log.info("Creating random OTP PIN with length {0!s} "
-                      "matching the contents policy {1!s}".format(list(pin_pols)[0], list(pol_contents)[0]))
+                     "matching the contents policy {1!s}".format(list(pin_pols)[0], list(pol_contents)[0]))
             # generate a pin which matches the contents requirement
             r = _generate_pin_from_policy(list(pol_contents)[0], size=int(list(pin_pols)[0]))
             request.all_data["pin"] = r
@@ -293,7 +300,7 @@ def realmadmin(request=None, action=None):
     # This decorator is only valid for admins
     if g.logged_in_user.get("role") == ROLE.ADMIN:
         params = request.all_data
-        if not "realm" in params:
+        if "realm" not in params:
             # add the realm to params
             po = Match.admin(g, action=action).policies()
             # TODO: fix this: there could be a list of policies with a list
@@ -317,10 +324,14 @@ def check_otp_pin(request=None, action=None):
     raised.
     """
     params = request.all_data
-    realm = params.get("realm")
     pin = params.get("otppin", "") or params.get("pin", "")
     serial = params.get("serial")
     tokentype = params.get("type")
+    rollover = params.get("rollover")
+    verify = params.get("verify")
+    if rollover or verify:
+        log.debug(f"Disable PIN checking due to rollover ({rollover}) or verify ({verify})")
+        return True
     if not serial and action == ACTION.SETPIN:
         path_elems = request.path.split("/")
         serial = path_elems[-1]
@@ -472,8 +483,8 @@ def enroll_pin(request=None, action=None):
     enrollment. If not, it deleted the PIN from the request.
     """
     resolver = request.User.resolver if request.User else None
-    (role, username, userrealm, adminuser, adminrealm ) = determine_logged_in_userparams(g.logged_in_user,
-                                                                                         request.all_data)
+    (role, username, userrealm, adminuser, adminrealm) = determine_logged_in_userparams(g.logged_in_user,
+                                                                                        request.all_data)
     allowed_action = Match.generic(g, scope=role,
                                    action=ACTION.ENROLLPIN,
                                    user_object=request.User,
@@ -539,12 +550,12 @@ def init_token_length_contents(request=None, action=None):
 
     user_object = get_user_from_param(params)
     length_pols = Match.user(g, scope=SCOPE.ENROLL, action=length_action,
-                            user_object=user_object).action_values(unique=True)
+                             user_object=user_object).action_values(unique=True)
     if len(length_pols) == 1:
         request.all_data[length_action] = list(length_pols)[0]
         no_length_policy = False
     content_pols = Match.user(g, scope=SCOPE.ENROLL, action=contents_action,
-                            user_object=user_object).action_values(unique=True)
+                              user_object=user_object).action_values(unique=True)
     if len(content_pols) == 1:
         request.all_data[contents_action] = list(content_pols)[0]
         no_content_policy = False
@@ -562,7 +573,7 @@ def init_tokenlabel(request=None, action=None):
     It adds the tokenlabel definition to the params like this:
     params : { "tokenlabel": "<u>@<r>" }
 
-    In addition it adds the tokenissuer to the params like this:
+    In addition, it adds the tokenissuer to the params like this:
     params : { "tokenissuer": "privacyIDEA instance" }
 
     It also checks if the force_app_pin policy is set and adds the corresponding
@@ -575,32 +586,73 @@ def init_tokenlabel(request=None, action=None):
     """
     params = request.all_data
     user_object = get_user_from_param(params)
-    token_type = getParam(request.all_data, "type", optional, "hotp").lower()
-    # get the serials from a policy definition
-    label_pols = Match.user(g, scope=SCOPE.ENROLL, action=ACTION.TOKENLABEL,
-                            user_object=user_object).action_values(unique=True, allow_white_space_in_action=True)
-    if len(label_pols) == 1:
-        # The policy was set, so we need to set the tokenlabel in the request.
-        request.all_data[ACTION.TOKENLABEL] = list(label_pols)[0]
-
-    issuer_pols = Match.user(g, scope=SCOPE.ENROLL, action=ACTION.TOKENISSUER,
-                             user_object=user_object).action_values(unique=True, allow_white_space_in_action=True)
-    if len(issuer_pols) == 1:
-        request.all_data[ACTION.TOKENISSUER] = list(issuer_pols)[0]
-
-    imageurl_pols = Match.user(g, scope=SCOPE.ENROLL, action=ACTION.APPIMAGEURL,
-                               user_object=user_object).action_values(unique=True, allow_white_space_in_action=True)
-    if len(imageurl_pols) == 1:
-        request.all_data[ACTION.APPIMAGEURL] = list(imageurl_pols)[0]
-
-    # check the force_app_pin policy
-    app_pin_pols = Match.user(g, scope=SCOPE.ENROLL,
-                              action='{0!s}_{1!s}'.format(token_type, ACTION.FORCE_APP_PIN),
-                              user_object=user_object).any()
-    if app_pin_pols:
-        request.all_data[ACTION.FORCE_APP_PIN] = True
-
+    token_type = getParam(params, "type", optional, "hotp").lower()
+    request.all_data = get_init_tokenlabel_parameters(g, params=params, token_type=token_type, user_object=user_object)
     return True
+
+
+def init_ca_connector(request=None, action=None):
+    """
+    This is a pre decorator for the endpoint '/token/init'.
+    It reads the policy scope=enrollment, action=certificate_ca_connector and
+    sets the API parameter "ca" accordingly.
+
+    :param request: The request to enhance
+    :return: None, but we modify the request
+    """
+    params = request.all_data
+    user_object = get_user_from_param(params)
+    token_type = getParam(request.all_data, "type", optional)
+    if token_type and token_type.lower() == "certificate":
+        # get the CA connectors from the policies
+        ca_pols = Match.user(g, scope=SCOPE.ENROLL, action=CERTIFICATE_ACTION.CA_CONNECTOR,
+                             user_object=user_object).action_values(unique=True)
+        if len(ca_pols) == 1:
+            # The policy was set, so we need to set the CA in the request
+            request.all_data["ca"] = list(ca_pols)[0]
+
+
+def init_ca_template(request=None, action=None):
+    """
+    This is a pre decorator for the endpoint '/token/init'.
+    It reads the policy scope=enrollment, action=certificate_template and
+    sets the API parameter "template" accordingly.
+
+    :param request: The request to enhance
+    :return: None, but we modify the request
+    """
+    params = request.all_data
+    user_object = get_user_from_param(params)
+    token_type = getParam(request.all_data, "type", optional)
+    if token_type and token_type.lower() == "certificate":
+        # get the CA template from the policies
+        template_pols = Match.user(g, scope=SCOPE.ENROLL, action=CERTIFICATE_ACTION.CERTIFICATE_TEMPLATE,
+                                   user_object=user_object).action_values(unique=True)
+        if len(template_pols) == 1:
+            # The policy was set, so we need to set the template in the request
+            request.all_data["template"] = list(template_pols)[0]
+
+
+def init_subject_components(request=None, action=None):
+    """
+    This is a pre decorator for the endpoint '/token/init'.
+    It reads the policy scope=enrollment, action=certificate_request_subject_component and
+    sets the API parameter "subject_component" accordingly.
+
+    :param request: The request to enhance
+    :return: None, but we modify the request
+    """
+    params = request.all_data
+    user_object = get_user_from_param(params)
+    token_type = getParam(request.all_data, "type", optional)
+    if token_type and token_type.lower() == "certificate":
+        # get the subject list from the policies
+        subject_pols = Match.user(g, scope=SCOPE.ENROLL,
+                                  action=CERTIFICATE_ACTION.CERTIFICATE_REQUEST_SUBJECT_COMPONENT,
+                                  user_object=user_object).action_values(unique=False)
+        if len(list(subject_pols)):
+            # The policy was set, we need to add the list to the parameters
+            request.all_data["subject_components"] = list(subject_pols)
 
 
 def twostep_enrollment_activation(request=None, action=None):
@@ -676,12 +728,12 @@ def twostep_enrollment_parameters(request=None, action=None):
     # Differentiate between an admin enrolling a token for the
     # user and a user self-enrolling a token.
     (role, username, userrealm, adminuser, adminrealm) = determine_logged_in_userparams(g.logged_in_user,
-                                                                                         request.all_data)
+                                                                                        request.all_data)
     # Tokentypes have separate twostep actions
     if is_true(getParam(request.all_data, "2stepinit", optional)):
         parameters = ("2step_serversize", "2step_clientsize", "2step_difficulty")
         for parameter in parameters:
-            action = u"{}_{}".format(token_type, parameter)
+            action = "{}_{}".format(token_type, parameter)
             # SCOPE.ENROLL does not have an admin realm
             action_values = Match.generic(g, action=action,
                                           scope=SCOPE.ENROLL,
@@ -714,6 +766,8 @@ def verify_enrollment(request=None, action=None):
                 r = tokenobj.verify_enrollment(verify)
                 log.info("Result of enrollment verification for token {0!s}: {1!s}".format(serial, r))
                 if r:
+                    # TODO: we need to add the tokentype here or the second init_token() call fails
+                    request.all_data.update(type=tokenobj.get_tokentype())
                     tokenobj.token.rollout_state = ROLLOUTSTATE.ENROLLED
                 else:
                     from privacyidea.lib.error import ParameterError
@@ -1122,7 +1176,7 @@ def check_anonymous_user(request=None, action=None):
     return True
 
 
-def check_admin_tokenlist(request=None, action=None):
+def check_admin_tokenlist(request=None, action=ACTION.TOKENLIST):
     """
     Depending on the policy scope=admin, action=tokenlist, the
     allowed_realms parameter is set to define, the token of which
@@ -1134,6 +1188,7 @@ def check_admin_tokenlist(request=None, action=None):
     ["realm1", "realm2"...]: the admin can see these realms
 
     :param request:
+    :param action: The action to be checked (tokenlist or container_list)
     :return:
     """
     allowed_realms = None
@@ -1143,14 +1198,14 @@ def check_admin_tokenlist(request=None, action=None):
         return True
 
     policy_object = g.policy_object
-    pols = Match.admin(g, action=ACTION.TOKENLIST).policies()
+    pols = Match.admin(g, action=action).policies()
     pols_at_all = policy_object.list_policies(scope=SCOPE.ADMIN, active=True)
 
     if pols_at_all:
         allowed_realms = []
         for pol in pols:
             if not pol.get("realm"):
-                # if there is no realm set in a tokenlist policy, then this is a wildcard!
+                # if there is no realm set in a tokenlist/container_list policy, then this is a wildcard!
                 wildcard = True
             else:
                 allowed_realms.extend(pol.get("realm"))
@@ -1158,7 +1213,10 @@ def check_admin_tokenlist(request=None, action=None):
         if wildcard:
             allowed_realms = None
 
-    request.pi_allowed_realms = allowed_realms
+    if action == ACTION.CONTAINER_LIST:
+        request.pi_allowed_container_realms = allowed_realms
+    else:
+        request.pi_allowed_realms = allowed_realms
     return True
 
 
@@ -1191,10 +1249,10 @@ def check_base_action(request=None, action=None, anonymous=False):
         realm = username = resolver = None
     else:
         realm = params.get("realm")
-        if type(realm) == list and len(realm) == 1:
+        if isinstance(realm, list) and len(realm) == 1:
             realm = realm[0]
         resolver = resolver or params.get("resolver")
-        # get the realm by the serial:
+        # get the realm by the token serial:
         if not realm and params.get("serial"):
             realm = get_realms_of_token(params.get("serial"),
                                         only_first_realm=True)
@@ -1213,12 +1271,86 @@ def check_base_action(request=None, action=None, anonymous=False):
     return True
 
 
+def check_container_action(request=None, action=None):
+    """
+    This decorator function takes the request and verifies the given action for the SCOPE ADMIN or USER. This decorator
+    is used for api calls that perform actions on container. If a token serial is passed, it also checks the policy
+    for the token realm.
+
+    :param request:
+    :param action:
+    :return: True if action is allowed, otherwise raises an Exception
+    """
+    ERROR = {"user": "User actions are defined, but the action %s is not "
+                     "allowed!" % action,
+             "admin": "Admin actions are defined, but the action %s is not "
+                      "allowed!" % action}
+    params = request.all_data
+    user_object = request.User
+    resolver = user_object.resolver if user_object else None
+    (role, username, realm, adminuser, adminrealm) = determine_logged_in_userparams(g.logged_in_user, params)
+
+    realm = params.get("realm")
+    resolver = resolver or params.get("resolver")
+
+    # Check action for (container) realm
+    match = Match.generic(g, scope=role,
+                          action=action,
+                          user=username,
+                          resolver=resolver,
+                          realm=realm,
+                          adminrealm=adminrealm,
+                          adminuser=adminuser)
+    action_allowed = match.allowed()
+
+    # Get allowed realms
+    allowed_realms = []
+    policies = match.policies()
+    for pol in policies:
+        if not pol.get("realm"):
+            # if there is no realm set in a policy, then this is a wildcard!
+            allowed_realms = None
+            break
+        else:
+            allowed_realms.extend(pol.get("realm"))
+    request.pi_allowed_realms = allowed_realms
+
+    # get the realm by the container serial
+    # This is a workaround to check all container and token realms since Match.generic() does only support one realm.
+    # TODO: Refactor Match.generic() to support multiple realms
+    if params.get("container_serial"):
+        container_realms = get_container_realms(params.get("container_serial"))
+
+        # Check if at least one container realm is allowed
+        if action_allowed and allowed_realms and container_realms:
+            matching_realms = list(set(container_realms).intersection(allowed_realms))
+            action_allowed = len(matching_realms) > 0
+
+        # get the realm by the token serial:
+        token_realms = None
+        if params.get("serial"):
+            serial = params.get("serial")
+            if serial.isalnum():
+                # single serial, no list
+                token_realms = get_realms_of_token(params.get("serial"), only_first_realm=False)
+
+            # Check if at least one token realm is allowed
+            if action_allowed and allowed_realms and token_realms:
+                matching_realms = list(set(token_realms).intersection(allowed_realms))
+                action_allowed = len(matching_realms) > 0
+
+    if not action_allowed:
+        raise PolicyError(ERROR.get(role))
+    return True
+
+
 def check_token_upload(request=None, action=None):
     """
     This decorator function takes the request and verifies the given action
     for scope ADMIN
-    :param req:
-    :param filename:
+
+    :param request:
+    :param action:
     :return:
     """
     tokenrealms = request.all_data.get("tokenrealms")
@@ -1243,6 +1375,7 @@ def check_token_init(request=None, action=None):
     This decorator function takes the request and verifies
     if the requested tokentype is allowed to be enrolled in the SCOPE ADMIN
     or the SCOPE USER.
+
     :param request:
     :param action:
     :return: True or an Exception is raised
@@ -1391,7 +1524,7 @@ def save_client_application_type(request, action):
     :return:
     """
     # retrieve the IP. This will also be the mapped IP!
-    client_ip = g.client_ip or "0.0.0.0"
+    client_ip = g.client_ip or "0.0.0.0"  # nosec B104 # default IP if no IP in request
     # ...and the user agent.
     ua = request.user_agent
     save_clientapplication(client_ip, "{0!s}".format(ua) or "unknown")
@@ -1410,10 +1543,11 @@ def pushtoken_disable_wait(request, action):
     request.all_data[PUSH_ACTION.WAIT] = False
 
 
-def pushtoken_wait(request, action):
+def pushtoken_validate(request, action):
     """
-    This is a auth specific wrapper to decorate /validate/check
+    This is an auth specific wrapper to decorate /validate/check
     According to the policy scope=SCOPE.AUTH, action=push_wait
+    and scope=SCOPE.AUTH, action=push_require_presence
 
     :param request:
     :param action:
@@ -1421,7 +1555,7 @@ def pushtoken_wait(request, action):
     """
     user_object = request.User
     waiting = Match.user(g, scope=SCOPE.AUTH, action=PUSH_ACTION.WAIT,
-                         user_object=user_object if user_object else None)\
+                         user_object=user_object if user_object else None) \
         .action_values(unique=True, allow_white_space_in_action=True)
     if len(waiting) >= 1:
         request.all_data[PUSH_ACTION.WAIT] = int(list(waiting)[0])
@@ -1442,40 +1576,7 @@ def pushtoken_add_config(request, action):
     """
     ttype = request.all_data.get("type")
     if ttype and ttype.lower() == "push":
-        ttl = None
-        registration_url = None
-        # Get the firebase configuration from the policies
-        firebase_config = Match.user(g, scope=SCOPE.ENROLL, action=PUSH_ACTION.FIREBASE_CONFIG,
-                                     user_object=request.User if request.User else None)\
-            .action_values(unique=True, allow_white_space_in_action=True)
-        if len(firebase_config) == 1:
-            request.all_data[PUSH_ACTION.FIREBASE_CONFIG] = list(firebase_config)[0]
-        else:
-            raise PolicyError("Missing enrollment policy for push token: {0!s}".format(PUSH_ACTION.FIREBASE_CONFIG))
-
-        # Get the sslverify definition from the policies
-        ssl_verify = Match.user(g, scope=SCOPE.ENROLL, action=PUSH_ACTION.SSL_VERIFY,
-                                user_object=request.User if request.User else None).action_values(unique=True)
-        if len(ssl_verify) == 1:
-            request.all_data[PUSH_ACTION.SSL_VERIFY] = list(ssl_verify)[0]
-        else:
-            request.all_data[PUSH_ACTION.SSL_VERIFY] = "1"
-
-        # Get the TTL and the registration URL from the policies
-        registration_url = Match.user(g, scope=SCOPE.ENROLL, action=PUSH_ACTION.REGISTRATION_URL,
-                                      user_object=request.User if request.User else None) \
-            .action_values(unique=True, allow_white_space_in_action=True)
-        if len(registration_url) == 1:
-            request.all_data[PUSH_ACTION.REGISTRATION_URL] = list(registration_url)[0]
-        else:
-            raise PolicyError("Missing enrollment policy for push token: {0!s}".format(PUSH_ACTION.REGISTRATION_URL))
-        ttl = Match.user(g, scope=SCOPE.ENROLL, action=PUSH_ACTION.TTL,
-                         user_object=request.User if request.User else None) \
-            .action_values(unique=True, allow_white_space_in_action=True)
-        if len(ttl) == 1:
-            request.all_data[PUSH_ACTION.TTL] = list(ttl)[0]
-        else:
-            request.all_data[PUSH_ACTION.TTL] = "10"
+        request.all_data = get_pushtoken_add_config(g, request.all_data, request.User)
 
 
 def u2ftoken_verify_cert(request, action):
@@ -1514,12 +1615,12 @@ def u2ftoken_allowed(request, action):
      action=U2FACTION.REQ it checks, if the assertion certificate is an
      allowed U2F token type.
 
-     If the token, which is enrolled contains a non allowed attestation 
+     If the token, which is enrolled contains a non allowed attestation
      certificate, we bail out.
 
-    :param request: 
-    :param action: 
-    :return: 
+    :param request:
+    :param action:
+    :return:
     """
 
     ttype = request.all_data.get("type")
@@ -1534,11 +1635,11 @@ def u2ftoken_allowed(request, action):
         # We just check, if the issuer is allowed, not if the certificate
         # is still valid! (verify_cert=False)
         attestation_cert, user_pub_key, key_handle, \
-        signature, description = parse_registration_data(reg_data,
-                                                         verify_cert=False)
+            signature, description = parse_registration_data(reg_data,
+                                                             verify_cert=False)
 
         allowed_certs_pols = Match.user(g, scope=SCOPE.ENROLL, action=U2FACTION.REQ,
-                                        user_object=request.User if request.User else None)\
+                                        user_object=request.User if request.User else None) \
             .action_values(unique=False)
 
         if len(allowed_certs_pols) and not _attestation_certificate_allowed(attestation_cert, allowed_certs_pols):
@@ -1557,7 +1658,7 @@ def u2ftoken_allowed(request, action):
 
 def allowed_audit_realm(request=None, action=None):
     """
-    This decorator function takes the request and adds additional parameters 
+    This decorator function takes the request and adds additional parameters
     to the request according to the policy
     for the SCOPE.ADMIN or ACTION.AUDIT
     :param request:
@@ -1667,7 +1768,7 @@ def webauthntoken_request(request, action):
     if not request.all_data.get("type") \
             and not is_webauthn_assertion_response(request.all_data) \
             and ('serial' not in request.all_data
-                or request.all_data['serial'].startswith(WebAuthnTokenClass.get_class_prefix())):
+                 or request.all_data['serial'].startswith(WebAuthnTokenClass.get_class_prefix())):
         webauthn = True
         scope = SCOPE.AUTH
 
@@ -1700,8 +1801,8 @@ def webauthntoken_request(request, action):
             if user_verification_requirement not in USER_VERIFICATION_LEVELS:
                 raise PolicyError(
                     "{0!s} must be one of {1!s}"
-                        .format(WEBAUTHNACTION.USER_VERIFICATION_REQUIREMENT,
-                                ", ".join(USER_VERIFICATION_LEVELS)))
+                    .format(WEBAUTHNACTION.USER_VERIFICATION_REQUIREMENT,
+                            ", ".join(USER_VERIFICATION_LEVELS)))
 
             request.all_data[WEBAUTHNACTION.USER_VERIFICATION_REQUIREMENT] \
                 = user_verification_requirement
@@ -1751,7 +1852,7 @@ def webauthntoken_authz(request, action):
 
     # If a WebAuthn token is being authorized.
     if is_webauthn_assertion_response(request.all_data):
-        allowed_certs_pols = Match\
+        allowed_certs_pols = Match \
             .user(g,
                   scope=SCOPE.AUTHZ,
                   action=WEBAUTHNACTION.REQ,
@@ -1802,7 +1903,7 @@ def webauthntoken_auth(request, action):
             and not is_webauthn_assertion_response(request.all_data) \
             and ('serial' not in request.all_data
                  or request.all_data['serial'].startswith(WebAuthnTokenClass.get_class_prefix())):
-        allowed_transports_policies = Match\
+        allowed_transports_policies = Match \
             .user(g,
                   scope=SCOPE.AUTH,
                   action=WEBAUTHNACTION.ALLOWED_TRANSPORTS,
@@ -1819,7 +1920,7 @@ def webauthntoken_auth(request, action):
             for transport in allowed_transports_policy.split()
         )
 
-        challengetext_policies = Match\
+        challengetext_policies = Match \
             .user(g,
                   scope=SCOPE.AUTH,
                   action="{0!s}_{1!s}".format(WebAuthnTokenClass.get_class_type(), ACTION.CHALLENGETEXT),
@@ -1856,6 +1957,7 @@ def webauthntoken_enroll(request, action):
     WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE,
     WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_LEVEL,
     WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_FORM,
+    WEAUTHNACTION.AVOID_DOUBLE_REGISTRATION,
     WEBAUTHNACTION.AUTHENTICATOR_SELECTION_LIST, and
     ACTION.CHALLENGETEXT, respectively.
 
@@ -1873,7 +1975,7 @@ def webauthntoken_enroll(request, action):
 
     ttype = request.all_data.get("type")
     if ttype and ttype.lower() == WebAuthnTokenClass.get_class_type():
-        rp_id_policies = Match\
+        rp_id_policies = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action=WEBAUTHNACTION.RELYING_PARTY_ID,
@@ -1884,7 +1986,7 @@ def webauthntoken_enroll(request, action):
         else:
             raise PolicyError("Missing enrollment policy for WebauthnToken: " + WEBAUTHNACTION.RELYING_PARTY_ID)
 
-        rp_name_policies = Match\
+        rp_name_policies = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action=WEBAUTHNACTION.RELYING_PARTY_NAME,
@@ -1900,12 +2002,12 @@ def webauthntoken_enroll(request, action):
         if not is_fqdn(rp_id):
             log.warning(
                 "Illegal value for {0!s} (must be a domain name): {1!s}"
-                    .format(WEBAUTHNACTION.RELYING_PARTY_ID, rp_id))
+                .format(WEBAUTHNACTION.RELYING_PARTY_ID, rp_id))
             raise PolicyError(
                 "Illegal value for {0!s} (must be a domain name)."
-                    .format(WEBAUTHNACTION.RELYING_PARTY_ID))
+                .format(WEBAUTHNACTION.RELYING_PARTY_ID))
 
-        authenticator_attachment_policies = Match\
+        authenticator_attachment_policies = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action=WEBAUTHNACTION.AUTHENTICATOR_ATTACHMENT,
@@ -1916,22 +2018,23 @@ def webauthntoken_enroll(request, action):
                and list(authenticator_attachment_policies)[0] in AUTHENTICATOR_ATTACHMENT_TYPES \
             else None
 
-        public_key_credential_algorithm_preference_policies = Match\
-            .user(g,
-                  scope=SCOPE.ENROLL,
-                  action=WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE,
-                  user_object=request.User if hasattr(request, 'User') else None) \
-            .action_values(unique=True)
-        public_key_credential_algorithm_preference = list(public_key_credential_algorithm_preference_policies)[0] \
-            if public_key_credential_algorithm_preference_policies \
+        # we need to set `unique` to False since this policy can contain multiple values
+        public_key_credential_algorithm_pref_policies = Match.user(
+            g,
+            scope=SCOPE.ENROLL,
+            action=WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHMS,
+            user_object=request.User if hasattr(request, 'User') else None
+        ).action_values(unique=False)
+        public_key_credential_algorithm_pref = public_key_credential_algorithm_pref_policies.keys() \
+            if public_key_credential_algorithm_pref_policies \
             else DEFAULT_PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE
-        if public_key_credential_algorithm_preference not in PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE_OPTIONS.keys():
+        if not all([x in PUBLIC_KEY_CREDENTIAL_ALGORITHMS for x in public_key_credential_algorithm_pref]):
             raise PolicyError(
                 "{0!s} must be one of {1!s}"
-                    .format(WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE,
-                            ', '.join(PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE_OPTIONS.keys())))
+                .format(WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHMS,
+                        ', '.join(PUBLIC_KEY_CREDENTIAL_ALGORITHMS.keys())))
 
-        authenticator_attestation_level_policies = Match\
+        authenticator_attestation_level_policies = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action=WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_LEVEL,
@@ -1945,7 +2048,7 @@ def webauthntoken_enroll(request, action):
                 "{0!s} must be one of {1!s}".format(WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_LEVEL,
                                                     ', '.join(ATTESTATION_LEVELS)))
 
-        authenticator_attestation_form_policies = Match\
+        authenticator_attestation_form_policies = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action=WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_FORM,
@@ -1959,7 +2062,7 @@ def webauthntoken_enroll(request, action):
                 "{0!s} must be one of {1!s}".format(WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_FORM,
                                                     ', '.join(ATTESTATION_FORMS)))
 
-        challengetext_policies = Match\
+        challengetext_policies = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action="{0!s}_{1!s}".format(WebAuthnTokenClass.get_class_type(), ACTION.CHALLENGETEXT),
@@ -1971,19 +2074,28 @@ def webauthntoken_enroll(request, action):
             if challengetext_policies \
             else DEFAULT_CHALLENGE_TEXT_ENROLL
 
+        avoid_double_registration_policy = Match \
+            .user(g,
+                  scope=SCOPE.ENROLL,
+                  action=WEBAUTHNACTION.AVOID_DOUBLE_REGISTRATION,
+                  user_object=request.User if hasattr(request, 'User') else None).any()
+
         request.all_data[WEBAUTHNACTION.RELYING_PARTY_ID] = rp_id
         request.all_data[WEBAUTHNACTION.RELYING_PARTY_NAME] = rp_name
 
         request.all_data[WEBAUTHNACTION.AUTHENTICATOR_ATTACHMENT] \
             = authenticator_attachment
-        request.all_data[WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE] \
-            = PUBLIC_KEY_CREDENTIAL_ALGORITHM_PREFERENCE_OPTIONS[public_key_credential_algorithm_preference]
+        request.all_data[WEBAUTHNACTION.PUBLIC_KEY_CREDENTIAL_ALGORITHMS] \
+            = [PUBLIC_KEY_CREDENTIAL_ALGORITHMS[x]
+               for x in PUBKEY_CRED_ALGORITHMS_ORDER
+               if x in public_key_credential_algorithm_pref]
         request.all_data[WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_LEVEL] \
             = authenticator_attestation_level
         request.all_data[WEBAUTHNACTION.AUTHENTICATOR_ATTESTATION_FORM] \
             = authenticator_attestation_form
         request.all_data["{0!s}_{1!s}".format(WebAuthnTokenClass.get_class_type(), ACTION.CHALLENGETEXT)] \
             = challengetext
+        request.all_data[WEBAUTHNACTION.AVOID_DOUBLE_REGISTRATION] = avoid_double_registration_policy
 
     return True
 
@@ -2035,7 +2147,7 @@ def webauthntoken_allowed(request, action):
                                                                       auth_data=att_obj.get('authData'))
 
         attestation_cert = crypto.X509.from_cryptography(trust_path[0]) if trust_path else None
-        allowed_certs_pols = Match\
+        allowed_certs_pols = Match \
             .user(g,
                   scope=SCOPE.ENROLL,
                   action=WEBAUTHNACTION.REQ,
@@ -2066,13 +2178,13 @@ def webauthntoken_allowed(request, action):
         if allowed_certs_pols and not _attestation_certificate_allowed(attestation_cert, allowed_certs_pols):
             log.warning(
                 "The WebAuthn token {0!s} is not allowed to be registered due to policy restriction {1!s}"
-                    .format(serial, WEBAUTHNACTION.REQ))
+                .format(serial, WEBAUTHNACTION.REQ))
             raise PolicyError("The WebAuthn token is not allowed to be registered due to a policy restriction.")
 
         if allowed_aaguids and aaguid not in [allowed_aaguid.replace("-", "") for allowed_aaguid in allowed_aaguids]:
             log.warning(
                 "The WebAuthn token {0!s} is not allowed to be registered due to policy restriction {1!s}"
-                    .format(serial, WEBAUTHNACTION.AUTHENTICATOR_SELECTION_LIST))
+                .format(serial, WEBAUTHNACTION.AUTHENTICATOR_SELECTION_LIST))
             raise PolicyError("The WebAuthn token is not allowed to be registered due to a policy restriction.")
 
     return True
@@ -2094,8 +2206,8 @@ def _attestation_certificate_allowed(attestation_cert, allowed_certs_pols):
     against, while attestation_certificate_required() expects the plain fields
     from the token info, containing just the issuer, serial and subject.
 
-    :param cert_info: The cert.
-    :type cert_info: X509 or None
+    :param attestation_cert: The attestation certificate.
+    :type attestation_cert: OpenSSL.crypto.X509 or None
     :param allowed_certs_pols: The policies restricting enrollment, or authorization.
     :type allowed_certs_pols: dict or None
     :return: Whether the token should be allowed to complete enrollment, or authorization, based on its attestation.
@@ -2132,7 +2244,7 @@ def required_piv_attestation(request, action=None):
     if ttype and ttype.lower() == "certificate":
         # Get attestation certificate requirement
         require_att = Match.user(g, scope=SCOPE.ENROLL, action=ACTION.REQUIRE_ATTESTATION,
-                                     user_object=request.User if request.User else None).action_values(unique=True)
+                                 user_object=request.User if request.User else None).action_values(unique=True)
         if REQUIRE_ACTIONS.REQUIRE_AND_VERIFY in list(require_att):
             if not request.all_data.get("attestation"):
                 # There is no attestation certificate in the request, although it is required!
@@ -2161,8 +2273,79 @@ def hide_tokeninfo(request=None, action=None):
     :rtype: bool
     """
     hidden_fields = Match.admin_or_user(g, action=ACTION.HIDE_TOKENINFO,
-                                        user_obj=request.User)\
+                                        user_obj=request.User) \
         .action_values(unique=False)
 
     request.all_data['hidden_tokeninfo'] = list(hidden_fields)
+    return True
+
+
+def increase_failcounter_on_challenge(request=None, action=None):
+    """
+    This is a decorator for /validate/check, validate/triggerchallenge and auth
+    which sets the parameter increase_failcounter_on_challenge
+    """
+    inc_fail_counter = Match.user(g, scope=SCOPE.AUTH, action=ACTION.INCREASE_FAILCOUNTER_ON_CHALLENGE,
+                                  user_object=request.User if hasattr(request, 'User') else None).any()
+    request.all_data["increase_failcounter_on_challenge"] = inc_fail_counter
+
+
+def require_description(request=None, action=None):
+    """
+    Pre Policy
+    This checks if a description is required to roll out a specific token.
+    scope=SCOPE.ENROLL, action=REQUIRE_DESCRIPTION
+
+    An exception is raised, if the tokentypes specified in the
+    REQUIRE_DESCRIPTION policy match the token to be rolled out,
+    but no description is given.
+
+    :param request:
+    :param action:
+    :return:
+    """
+    params = request.all_data
+    user_object = request.User
+    (role, username, realm, adminuser, adminrealm) = determine_logged_in_userparams(g.logged_in_user, params)
+
+    action_values = Match.generic(g, action=ACTION.REQUIRE_DESCRIPTION,
+                                  scope=SCOPE.ENROLL,
+                                  adminrealm=adminrealm,
+                                  adminuser=adminuser,
+                                  user=username,
+                                  realm=realm,
+                                  user_object=user_object).action_values(unique=False)
+
+    token_types = list(action_values.keys())
+    type_value = request.all_data.get("type") or 'hotp'
+    if type_value in token_types:
+        tok = None
+        serial = getParam(params, "serial")
+        if serial:
+            tok = get_one_token(serial=serial, rollout_state=ROLLOUTSTATE.VERIFYPENDING, silent_fail=True) or \
+                  get_one_token(serial=serial, rollout_state=ROLLOUTSTATE.CLIENTWAIT, silent_fail=True)
+        # only if no token exists, yet, we need to check the description
+        if not tok and not request.all_data.get("description"):
+            log.warning(_("Missing description for {} token.".format(type_value)))
+            raise PolicyError(_("Description required for {} token.".format(type_value)))
+
+
+def jwt_validity(request, action):
+    """
+    This is a decorator for the /auth endpoint to adapt the validity period of the issued JWT.
+    :param request:
+    :param action:
+    :return:
+    """
+    validity_time_pol = (Match.user(g, scope=SCOPE.WEBUI, action=ACTION.JWTVALIDITY,
+                                    user_object=request.User if hasattr(request, 'User') else None)
+                         .action_values(unique=True))
+
+    validity_time = DEFAULT_JWT_VALIDITY
+    if len(validity_time_pol) == 1:
+        try:
+            validity_time = int(list(validity_time_pol)[0])
+        except ValueError:
+            log.warning(f"Invalid JWT validity period: {validity_time}. Using the default of 1 hour.")
+    request.all_data[ACTION.JWTVALIDITY] = validity_time
     return True

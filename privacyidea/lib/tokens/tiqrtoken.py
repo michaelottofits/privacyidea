@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  http://www.privacyidea.org
 #  2018-04-16 Friedrich Weber <friedrich.weber@netknights.it>
 #             Fix validation of challenge responses
@@ -80,7 +78,7 @@ the token in challenge response.
 This code is tested in tests/test_lib_tokens_tiqr.
 """
 
-from six.moves.urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 from privacyidea.api.lib.utils import getParam
 from privacyidea.lib.config import get_from_config
@@ -92,8 +90,7 @@ import logging
 from privacyidea.lib.token import get_one_token
 from privacyidea.lib.error import ParameterError
 from privacyidea.models import Challenge
-from privacyidea.lib.user import get_user_from_param
-from privacyidea.lib.tokens.ocra import OCRASuite, OCRA
+from privacyidea.lib.tokens.ocra import OCRASuite
 from privacyidea.lib.challenge import get_challenges
 from privacyidea.models import cleanup_challenges
 from privacyidea.lib import _
@@ -195,7 +192,7 @@ class TiqrTokenClass(OcraTokenClass):
         :type db_token: DB object
         """
         TokenClass.__init__(self, db_token)
-        self.set_type(u"tiqr")
+        self.set_type("tiqr")
         self.hKeyRequired = False
 
     def update(self, param):
@@ -239,8 +236,7 @@ class TiqrTokenClass(OcraTokenClass):
                                                     _("URL for TiQR "
                                                       "enrollment"),
                                          "value": tiqrenroll,
-                                         "img": create_img(tiqrenroll,
-                                                           width=250)}
+                                         "img": create_img(tiqrenroll)}
 
         return response_detail
 
@@ -368,8 +364,9 @@ class TiqrTokenClass(OcraTokenClass):
                             maxfail = token.get_max_failcount()
                             res = "INVALID_RESPONSE:{0!s}".format(maxfail - fail)
                             break
-
-            cleanup_challenges()
+                if not challenge.is_valid():
+                    # The challenge is not valid anymore. We delete the challenge.
+                    challenge.delete()
 
             return "plain", res
 
@@ -427,14 +424,13 @@ class TiqrTokenClass(OcraTokenClass):
 
         # Encode the user to UTF-8 and quote the result
         encoded_user_identifier = quote_plus(user_identifier.encode('utf-8'))
-        authurl = u"tiqrauth://{0!s}@{1!s}/{2!s}/{3!s}/{4!s}".format(
+        authurl = "tiqrauth://{0!s}@{1!s}/{2!s}/{3!s}/{4!s}".format(
                                               encoded_user_identifier,
                                               service_identifier,
                                               db_challenge.transaction_id,
                                               challenge,
-                                              service_displayname
-                                              )
-        image = create_img(authurl, width=250)
+                                              quote(service_displayname))
+        image = create_img(authurl)
         attributes = {"img": image,
                       "value": authurl,
                       "poll": self.client_mode == CLIENTMODE.POLL,

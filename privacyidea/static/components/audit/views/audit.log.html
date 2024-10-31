@@ -19,7 +19,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-bordered table-striped" id="tableauditlog">
+        <table class="table table-bordered table-striped table-capitalize-header" id="tableauditlog">
             <thead>
             <tr>
                 <th ng-show="audit_columns.includes('number')"><translate>number</translate></th>
@@ -53,6 +53,12 @@
                                ng-change="getAuditList('livesearch')"
                                ng-keypress="($event.which==13)?getAuditList():return">
                 </th>
+                <th ng-show="audit_columns.includes('authentication')"
+                    class="pifilter"><translate>authentication</translate>
+                    <pi-filter ng-model="authenticationFilter"
+                               ng-change="getAuditList('livesearch')"
+                               ng-keypress="($event.which==13)?getAuditList():return">
+                </th>
                 <th ng-show="audit_columns.includes('action_detail')"
                     class="pifilter"><translate>action detail</translate>
                     <pi-filter ng-model="action_detailFilter"
@@ -68,6 +74,20 @@
                 <th ng-show="audit_columns.includes('token_type')"
                     class="pifilter"><translate>token type</translate>
                     <pi-filter ng-model="typeFilter"
+                               ng-change="getAuditList('livesearch')"
+                               ng-keypress="($event.which==13)?getAuditList():return">
+                </th>
+                <th ng-show="audit_columns.includes('container_serial')"
+                    class="piFilter">
+                    <translate> Container Serial </translate>
+                    <pi-filter ng-model="containerSerialFilter"
+                               ng-change="getAuditList('livesearch')"
+                               ng-keypress="($event.which==13)?getAuditList():return">
+                </th>
+                <th ng-show="audit_columns.includes('container_type')"
+                    class="piFilter">
+                    <translate> Container Type </translate>
+                    <pi-filter ng-model="containerTypeFilter"
                                ng-change="getAuditList('livesearch')"
                                ng-keypress="($event.which==13)?getAuditList():return">
                 </th>
@@ -107,6 +127,18 @@
                                ng-change="getAuditList('livesearch')"
                                ng-keypress="($event.which==13)?getAuditList():return">
                 </th>
+                <th ng-show="audit_columns.includes('user_agent')"
+                    class="pifilter"><translate>user agent</translate>
+                    <pi-filter ng-model="user_agentFilter"
+                               ng-change="getAuditList('livesearch')"
+                               ng-keypress="($event.which==13)?getAuditList():return">
+                </th>
+                <th ng-show="audit_columns.includes('user_agent_version')"
+                    class="pifilter"><translate>user agent version</translate>
+                    <pi-filter ng-model="user_agent_versionFilter"
+                               ng-change="getAuditList('livesearch')"
+                               ng-keypress="($event.which==13)?getAuditList():return">
+                </th>
                 <th ng-show="audit_columns.includes('info')"
                     class="pifilter"><translate>info</translate>
                     <pi-filter ng-model="infoFilter"
@@ -115,6 +147,7 @@
                 </th>
                 <th ng-show="audit_columns.includes('sig_check')" translate>sig_check</th>
                 <th ng-show="audit_columns.includes('missing_line')" translate>missing_line</th>
+                <th ng-show="audit_columns.includes('thread_id')" translate>thread_id</th>
                 <th ng-show="audit_columns.includes('clearance_level')" translate>clearance</th>
                 <th ng-show="audit_columns.includes('log_level')" translate>log level</th>
                 <th ng-show="audit_columns.includes('privacyidea_server')"
@@ -133,6 +166,7 @@
                 <td ng-if="audit_columns.includes('duration')">{{ audit.duration }}</td>
                 <td ng-if="audit_columns.includes('action')">{{ audit.action }}</td>
                 <td ng-if="audit_columns.includes('success')"><span status-class="{{ audit.success }}">{{ audit.success }}</span>
+                <td ng-if="audit_columns.includes('authentication')"><span status-class="{{ audit.authentication }}">{{ audit.authentication }}</span></td>
                 <td ng-if="audit_columns.includes('action_detail')">{{ audit.action_detail }}</td>
                 <td>
                     <a ng-repeat="serial in audit.serial_list" ui-sref="token.details({tokenSerial:serial})"
@@ -140,6 +174,13 @@
                     {{ serial }}</a>
                 </td>
                 <td ng-if="audit_columns.includes('token_type')">{{ audit.token_type }}</td>
+                <td ng-if="audit_columns.includes('container_serial')">
+                    <a ui-sref="token.containerdetails({containerSerial:audit.container_serial})"
+                        ng-click="$rootScope.returnTo=audit;">
+                        {{ audit.container_serial }}
+                       </a>
+                </td>
+                <td ng-if="audit_columns.includes('container_type')">{{ audit.container_type }}</td>
                 <td ng-if="audit_columns.includes('administrator')">{{ audit.administrator }}</td>
                 <td ng-if="audit_columns.includes('user')">
                     <a ui-sref="user.details({username:audit.user,realmname:audit.realm})">
@@ -164,12 +205,15 @@
                     </span>
                 </td>
                 <td ng-if="audit_columns.includes('client')">{{ audit.client }}</td>
+                <td ng-if="audit_columns.includes('user_agent')">{{ audit.user_agent }}</td>
+                <td ng-if="audit_columns.includes('user_agent_version')">{{ audit.user_agent_version }}</td>
                 <td ng-if="audit_columns.includes('info')">{{ audit.info }}</td>
                 <td ng-if="audit_columns.includes('sig_check')"><span status-class="{{ audit.sig_check }}">
                 {{ audit.sig_check }}
             </span></td>
                 <td ng-if="audit_columns.includes('missing_line')"><span status-class="{{ audit.missing_line }}">
                 {{ audit.missing_line }}</span></td>
+                <td ng-if="audit_columns.includes('thread_id')">{{ audit.thread_id }}</td>
                 <td ng-if="audit_columns.includes('clearance_level')">{{ audit.clearance_level }}</td>
                 <td ng-if="audit_columns.includes('log_level')">{{ audit.log_level }}</td>
                 <td ng-if="audit_columns.includes('privacyidea_server')">{{ audit.privacyidea_server }}</td>

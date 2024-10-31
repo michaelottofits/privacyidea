@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from privacyidea.lib.resolver import save_resolver
 from privacyidea.lib.realm import set_realm
 from .base import MyApiTestCase
@@ -54,7 +53,7 @@ class RegisterTestCase(MyApiTestCase):
         r = save_resolver(param)
         self. assertTrue(r > 0)
 
-        added, failed = set_realm("register", resolvers=["register"])
+        added, failed = set_realm("register", resolvers=[{'name': "register"}])
         self.assertTrue(len(added) > 0, added)
         self.assertEqual(len(failed), 0, failed)
 
@@ -85,7 +84,7 @@ class RegisterTestCase(MyApiTestCase):
             data = res.json
             self.assertEqual(data.get("result").get("error").get("code"), ERROR.REGISTRATION)
             self.assertEqual(data.get("result").get("error").get("message"),
-                         u'ERR402: No SMTP server configuration specified!')
+                         'ERR402: No SMTP server configuration specified!')
 
         # Set SMTP config and policy
         add_smtpserver("myserver", "1.2.3.4", sender="pi@localhost")

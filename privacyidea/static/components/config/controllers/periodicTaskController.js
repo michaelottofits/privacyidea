@@ -51,6 +51,7 @@ myApp.controller("periodicTaskController", ["$scope", "$stateParams", "$state",
             $scope.getPeriodicTasks();
         });
     };
+
     $scope.orderChanged = function (ptask) {
         // we cannot directly pass ``ptask`` because we need to join the nodes list
         var params = {
@@ -93,7 +94,8 @@ myApp.controller("periodicTaskDetailController", ["$scope", "$stateParams",
             $scope.availableNodes = [];
             angular.forEach(response.result.value, function (node) {
                 $scope.availableNodes.push({
-                    "name": node,
+                    "name": node.name,
+                    "uuid": node.uuid,
                     "ticked": false,
                 });
             });
@@ -175,6 +177,7 @@ myApp.controller("periodicTaskDetailController", ["$scope", "$stateParams",
         }
         ConfigFactory.setPeriodicTask(params, function() {
             $state.go("config.periodictasks.list");
+            $scope.reload();
         });
         $('html,body').scrollTop(0);
     };

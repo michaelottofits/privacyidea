@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA is a fork of LinOTP
 #  May 08, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -23,14 +21,13 @@
 #
 # You should have received a copy of the GNU Affero General Public
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#    
+#
 """
 contains Errors and Exceptions
 """
 
-import six
-from privacyidea.lib import _
 import logging
+
 log = logging.getLogger(__name__)
 
 
@@ -39,6 +36,7 @@ class ERROR:
     TOKENADMIN = 301
     CONFIGADMIN = 302
     POLICY = 303
+    IMPORTADMIN = 304
     VALIDATE = 401
     REGISTRATION = 402
     AUTHENTICATE = 403
@@ -48,19 +46,22 @@ class ERROR:
     AUTHENTICATE_DECODING_ERROR = 4304
     AUTHENTICATE_TOKEN_EXPIRED = 4305
     AUTHENTICATE_MISSING_RIGHT = 4306
+    ENROLLMENT = 404
     CA = 503
+    CA_CSR_INVALID = 504
+    CA_CSR_PENDING = 505
     RESOURCE_NOT_FOUND = 601
     HSM = 707
     SELFSERVICE = 807
+    DATABASE = 902
     SERVER = 903
     USER = 904
     PARAMETER = 905
 
 
-@six.python_2_unicode_compatible
 class privacyIDEAError(Exception):
 
-    def __init__(self, description=u"privacyIDEAError!", id=10):
+    def __init__(self, description="privacyIDEAError!", id=10):
         self.id = id
         self.message = description
         Exception.__init__(self, description)
@@ -72,20 +73,20 @@ class privacyIDEAError(Exception):
         return self.message
 
     def __str__(self):
-        pstr = u"ERR%d: %r"
-        if isinstance(self.message, six.string_types):
-            pstr = u"ERR%d: %s"
+        pstr = "ERR%d: %r"
+        if isinstance(self.message, str):
+            pstr = "ERR%d: %s"
 
-        ### if we have here unicode, we might fail with conversion error
+        # if we have unicode here, we might fail with conversion error
         try:
             res = pstr % (self.id, self.message)
         except Exception as exx:
-            res = u"ERR{0:d}: {1!r}".format(self.id, self.message)
+            res = "ERR{0:d}: {1!r}".format(self.id, self.message)
         return res
 
     def __repr__(self):
         ret = '{0!s}(description={1!r}, id={2:d})'.format(type(self).__name__,
-                                             self.message, self.id)
+                                                          self.message, self.id)
         return ret
 
 
@@ -103,6 +104,11 @@ class SubscriptionError(privacyIDEAError):
         ret = '{0!s}({1!r}, application={2!s})'.format(type(
             self).__name__, self.message, self.application)
         return ret
+
+
+class TokenImportException(privacyIDEAError):
+    def __init__(self, description, id=ERROR.IMPORTADMIN):
+        privacyIDEAError.__init__(self, description=description, id=id)
 
 
 class AuthError(privacyIDEAError):
@@ -127,7 +133,12 @@ class ValidateError(privacyIDEAError):
 
 
 class RegistrationError(privacyIDEAError):
-    def __init__(self, description="registraion error!", id=ERROR.REGISTRATION):
+    def __init__(self, description="registration error!", id=ERROR.REGISTRATION):
+        privacyIDEAError.__init__(self, description=description, id=id)
+
+
+class EnrollmentError(privacyIDEAError):
+    def __init__(self, description="enrollment error!", id=ERROR.ENROLLMENT):
         privacyIDEAError.__init__(self, description=description, id=id)
 
 
@@ -144,6 +155,17 @@ class ConfigAdminError(privacyIDEAError):
 class CAError(privacyIDEAError):
     def __init__(self, description="CA error!", id=ERROR.CA):
         privacyIDEAError.__init__(self, description=description, id=id)
+
+
+class CSRError(CAError):
+    def __init__(self, description="CSR invalid", id=ERROR.CA_CSR_INVALID):
+        privacyIDEAError.__init__(self, description=description, id=id)
+
+
+class CSRPending(CAError):
+    def __init__(self, description="CSR pending", id=ERROR.CA_CSR_PENDING, requestId=None):
+        privacyIDEAError.__init__(self, description=description, id=id)
+        self.requestId = requestId
 
 
 class UserError(privacyIDEAError):
@@ -167,7 +189,12 @@ class SelfserviceException(privacyIDEAError):
 
 
 class ParameterError(privacyIDEAError):
-    USER_OR_SERIAL = _('You either need to provide user or serial')
 
     def __init__(self, description="unspecified parameter error!", id=ERROR.PARAMETER):
         privacyIDEAError.__init__(self, description=description, id=id)
+
+
+class DatabaseError(privacyIDEAError):
+    """Error in the database layer"""
+    def __init__(self, description="database error!", eid=ERROR.DATABASE):
+        privacyIDEAError.__init__(self, description=description, id=eid)

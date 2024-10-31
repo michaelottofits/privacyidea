@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # http://www.privacyidea.org
 # (c) cornelius kölbel, privacyidea.org
 #
@@ -27,8 +25,10 @@ Flask endpoints.
 It also contains the error handlers.
 """
 
-import six
 from .lib.utils import (send_error, get_all_params)
+from .container import container_blueprint
+from ..lib.container import find_container_for_token, find_container_by_serial
+from ..lib.framework import get_app_config_value
 from ..lib.user import get_user_from_param
 import logging
 from .lib.utils import getParam
@@ -39,7 +39,7 @@ from privacyidea.lib.policy import PolicyClass
 from privacyidea.lib.event import EventConfiguration
 from privacyidea.lib.lifecycle import call_finalizers
 from privacyidea.api.auth import (user_required, admin_required, jwtauth)
-from privacyidea.lib.config import get_from_config, SYSCONF, ensure_no_config_object
+from privacyidea.lib.config import get_from_config, SYSCONF, ensure_no_config_object, get_privacyidea_node
 from privacyidea.lib.token import get_token_type, get_token_owner
 from privacyidea.api.ttype import ttype_blueprint
 from privacyidea.api.validate import validate_blueprint
@@ -66,13 +66,16 @@ from .smsgateway import smsgateway_blueprint
 from .clienttype import client_blueprint
 from .subscriptions import subscriptions_blueprint
 from .monitoring import monitoring_blueprint
+from .tokengroup import tokengroup_blueprint
+from .serviceid import serviceid_blueprint
 from privacyidea.api.lib.postpolicy import postrequest, sign_response
 from ..lib.error import (privacyIDEAError,
                          AuthError, UserError,
                          PolicyError, ResourceNotFoundError)
-from privacyidea.lib.utils import get_client_ip
+from privacyidea.lib.utils import get_client_ip, get_plugin_info_from_useragent
 from privacyidea.lib.user import User
 import datetime
+import threading
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +85,7 @@ log = logging.getLogger(__name__)
 # The decorated functions are called before and after *every* request.
 @token_blueprint.before_app_request
 def log_begin_request():
-    log.debug(u"Begin handling of request {!r}".format(request.full_path))
+    log.debug("Begin handling of request {!r}".format(request.full_path))
     g.startdate = datetime.datetime.now()
 
 
@@ -94,13 +97,14 @@ def teardown_request(exc):
     except AttributeError:
         # In certain error cases the before_request was not handled
         # completely so that we do not have an audit_object
-        # Also during calling webui, there is not audit_object, yet.
+        # Also during calling webui, there is no audit_object, yet.
         pass
     call_finalizers()
-    log.debug(u"End handling of request {!r}".format(request.full_path))
+    log.debug("End handling of request {!r}".format(request.full_path))
 
 
 @token_blueprint.before_request
+@container_blueprint.before_request
 @audit_blueprint.before_request
 @system_blueprint.before_request
 @user_required
@@ -112,7 +116,7 @@ def before_user_request():
 @user_required
 def before_userendpoint_request():
     before_request()
-    # DEL /user/ has no realm parameter and thus we need to create the user object this way.
+    # DEL /user/ has no realm parameter, and thus we need to create the user object this way.
     if not request.User and request.method == "DELETE":
         resolvername = getParam(request.all_data, "resolvername")
         username = getParam(request.all_data, "username")
@@ -137,6 +141,8 @@ def before_userendpoint_request():
 @client_blueprint.before_request
 @subscriptions_blueprint.before_request
 @monitoring_blueprint.before_request
+@tokengroup_blueprint.before_request
+@serviceid_blueprint.before_request
 @admin_required
 def before_admin_request():
     before_request()
@@ -162,12 +168,12 @@ def before_request():
 
     try:
         request.User = get_user_from_param(request.all_data)
-        # overwrite or set the resolver parameter in case of a logged in user
+        # overwrite or set the resolver parameter in case of a logged-in user
         if g.logged_in_user.get("role") == "user":
             request.all_data["resolver"] = request.User.resolver
     except AttributeError:
         # Some endpoints do not need users OR e.g. the setPolicy endpoint
-        # takes a list as the userobject
+        # takes a list as the user object
         request.User = None
     except UserError:
         # In cases like the policy API, the parameter "user" is part of the
@@ -177,16 +183,15 @@ def before_request():
     g.policy_object = PolicyClass()
     g.audit_object = getAudit(current_app.config, g.startdate)
     g.event_config = EventConfiguration()
-    # access_route contains the ip adresses of all clients, hops and proxies.
+    # access_route contains the ip addresses of all clients, hops and proxies.
     g.client_ip = get_client_ip(request,
                                 get_from_config(SYSCONF.OVERRIDECLIENT))
     # Save the HTTP header in the localproxy object
     g.request_headers = request.headers
-    privacyidea_server = current_app.config.get("PI_AUDIT_SERVERNAME") or \
-                         request.host
+    privacyidea_server = get_app_config_value("PI_AUDIT_SERVERNAME", get_privacyidea_node(request.host))
     # Already get some typical parameters to log
     serial = getParam(request.all_data, "serial")
-    if serial and not "*" in serial:
+    if serial and "*" not in serial and "," not in serial:
         g.serial = serial
         tokentype = get_token_type(serial)
         if not request.User:
@@ -201,6 +206,36 @@ def before_request():
         g.serial = None
         tokentype = None
 
+    # Container info
+    container_serial = getParam(request.all_data, "container_serial")
+    container = None
+    container_type = None
+    if container_serial and "*" not in container_serial:
+        try:
+            container = find_container_by_serial(container_serial)
+        except ResourceNotFoundError:
+            # The container serial might not exist
+            pass
+    elif serial and "*" not in serial:
+        # Get container serial from token
+        # if a serial list is given, check if all tokens are in the same container
+        serial_list = serial.replace(" ", "").split(",")
+        for idx, t_serial in enumerate(serial_list):
+            try:
+                container = find_container_for_token(t_serial)
+            except ResourceNotFoundError:
+                # The container serial might not exist
+                continue
+            if container:
+                if idx == 0:
+                    container_serial = container.serial
+            if not container or container_serial != container.serial:
+                # If at least one token is in a different or no container, we do not set the container attributes.
+                container_serial = None
+                break
+    if container:
+        container_type = container.type
+
     if request.User:
         audit_username = request.User.login
         audit_realm = request.User.realm
@@ -210,17 +245,22 @@ def before_request():
         audit_resolver = getParam(request.all_data, "resolver")
         audit_username = getParam(request.all_data, "user")
 
+    ua_name, ua_version, _ua_comment = get_plugin_info_from_useragent(request.user_agent.string)
     g.audit_object.log({"success": False,
                         "serial": serial,
                         "user": audit_username,
                         "realm": audit_realm,
                         "resolver": audit_resolver,
                         "token_type": tokentype,
+                        "container_serial": container_serial,
+                        "container_type": container_type,
                         "client": g.client_ip,
-                        "client_user_agent": request.user_agent.browser,
+                        "user_agent": ua_name,
+                        "user_agent_version": ua_version,
                         "privacyidea_server": privacyidea_server,
                         "action": "{0!s} {1!s}".format(request.method, request.url_rule),
                         "action_detail": "",
+                        "thread_id": "{0!s}".format(threading.current_thread().ident),
                         "info": ""})
 
     if g.logged_in_user.get("role") == "admin":
@@ -258,6 +298,9 @@ def before_request():
 @validate_blueprint.after_request
 @register_blueprint.after_request
 @recover_blueprint.after_request
+@tokengroup_blueprint.after_request
+@serviceid_blueprint.after_request
+@container_blueprint.after_request
 @jwtauth.after_request
 @postrequest(sign_response, request=request)
 def after_request(response):
@@ -283,6 +326,9 @@ def after_request(response):
 @eventhandling_blueprint.app_errorhandler(AuthError)
 @subscriptions_blueprint.app_errorhandler(AuthError)
 @monitoring_blueprint.app_errorhandler(AuthError)
+@tokengroup_blueprint.app_errorhandler(AuthError)
+@serviceid_blueprint.app_errorhandler(AuthError)
+@container_blueprint.app_errorhandler(AuthError)
 def auth_error(error):
     if "audit_object" in g:
         message = ''
@@ -293,7 +339,7 @@ def auth_error(error):
         if hasattr(error, 'details'):
             if error.details:
                 if 'message' in error.details:
-                    message = u'{}|{}'.format(message, error.details['message'])
+                    message = '{}|{}'.format(message, error.details['message'])
 
         g.audit_object.add_to_log({"info": message}, add_with_comma=True)
     return send_error(error.message,
@@ -317,6 +363,9 @@ def auth_error(error):
 @subscriptions_blueprint.app_errorhandler(PolicyError)
 @monitoring_blueprint.app_errorhandler(PolicyError)
 @ttype_blueprint.app_errorhandler(PolicyError)
+@tokengroup_blueprint.app_errorhandler(PolicyError)
+@serviceid_blueprint.app_errorhandler(PolicyError)
+@container_blueprint.app_errorhandler(PolicyError)
 def policy_error(error):
     if "audit_object" in g:
         g.audit_object.add_to_log({"info": error.message}, add_with_comma=True)
@@ -338,6 +387,9 @@ def policy_error(error):
 @recover_blueprint.app_errorhandler(ResourceNotFoundError)
 @subscriptions_blueprint.app_errorhandler(ResourceNotFoundError)
 @ttype_blueprint.app_errorhandler(ResourceNotFoundError)
+@tokengroup_blueprint.errorhandler(ResourceNotFoundError)
+@serviceid_blueprint.errorhandler(ResourceNotFoundError)
+@container_blueprint.app_errorhandler(ResourceNotFoundError)
 def resource_not_found_error(error):
     """
     This function is called when an ResourceNotFoundError occurs.
@@ -364,14 +416,17 @@ def resource_not_found_error(error):
 @subscriptions_blueprint.app_errorhandler(privacyIDEAError)
 @monitoring_blueprint.app_errorhandler(privacyIDEAError)
 @ttype_blueprint.app_errorhandler(privacyIDEAError)
+@tokengroup_blueprint.app_errorhandler(privacyIDEAError)
+@serviceid_blueprint.app_errorhandler(privacyIDEAError)
+@container_blueprint.app_errorhandler(privacyIDEAError)
 def privacyidea_error(error):
     """
     This function is called when an privacyIDEAError occurs.
     These are not that critical exceptions.
     """
     if "audit_object" in g:
-        g.audit_object.log({"info": six.text_type(error)})
-    return send_error(six.text_type(error), error_code=error.id), 400
+        g.audit_object.log({"info": str(error)})
+    return send_error(str(error), error_code=error.id), 400
 
 
 # other errors
@@ -391,6 +446,9 @@ def privacyidea_error(error):
 @subscriptions_blueprint.app_errorhandler(500)
 @monitoring_blueprint.app_errorhandler(500)
 @ttype_blueprint.app_errorhandler(500)
+@tokengroup_blueprint.app_errorhandler(500)
+@serviceid_blueprint.app_errorhandler(500)
+@container_blueprint.app_errorhandler(500)
 def internal_error(error):
     """
     This function is called when an internal error (500) occurs.
@@ -398,5 +456,5 @@ def internal_error(error):
     occurs.
     """
     if "audit_object" in g:
-        g.audit_object.log({"info": six.text_type(error)})
-    return send_error(six.text_type(error), error_code=-500), 500
+        g.audit_object.log({"info": str(error)})
+    return send_error(str(error), error_code=-500), 500

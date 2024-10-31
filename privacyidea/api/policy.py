@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # http://www.privacyidea.org
 # (c) cornelius kölbel, privacyidea.org
 #
@@ -50,7 +48,7 @@ from ..lib.policy import (set_policy, ACTION,
 from ..lib.token import get_dynamic_policy_definitions
 from ..lib.error import (ParameterError)
 from privacyidea.lib.utils import to_unicode, is_true
-from privacyidea.lib.config import get_privacyidea_nodes
+from privacyidea.lib.config import get_privacyidea_node_names
 from ..api.lib.prepolicy import prepolicy, check_base_action
 
 from flask import g
@@ -112,6 +110,8 @@ def set_policy_api(name=None):
     :jsonparam basestring name: name of the policy
     :jsonparam scope: the scope of the policy like "admin", "system",
         "authentication" or "selfservice"
+    :jsonparam priority: the priority of the policy
+    :jsonparam description: a description of the policy
     :jsonparam adminrealm: Realm of the administrator. (only for admin scope)
     :jsonparam adminuser: Username of the administrator. (only for admin scope)
     :jsonparam action: which action may be executed
@@ -120,6 +120,7 @@ def set_policy_api(name=None):
     :jsonparam user: The policy is valid for these users.
         string with wild cards or list of strings
     :jsonparam time: on which time does this policy hold
+    :jsonparam pinode: The privacyIDEA node (or list of nodes) for which this policy is valid
     :jsonparam client: for which requesting client this should be
     :jsontype client: IP address with subnet
     :jsonparam active: bool, whether this policy is active or not
@@ -196,15 +197,17 @@ def set_policy_api(name=None):
     admin_user = getParam(param, "adminuser", optional)
     priority = int(getParam(param, "priority", optional, default=1))
     conditions = getParam(param, "conditions", optional)
+    description = getParam(param, "description", optional)
 
     g.audit_object.log({'action_detail': name,
-                        'info': u"{0!s}".format(param)})
+                        'info': "{0!s}".format(param)})
     ret = set_policy(name=name, scope=scope, action=action, realm=realm,
                      resolver=resolver, user=user, client=client, time=time,
                      active=active or True, adminrealm=admin_realm,
                      adminuser=admin_user, pinode=pinode,
                      check_all_resolvers=check_all_resolvers or False,
-                     priority=priority, conditions=conditions)
+                     priority=priority, conditions=conditions,
+                     description=description)
     log.debug("policy {0!s} successfully saved.".format(name))
     string = "setPolicy " + name
     res[string] = ret
@@ -297,7 +300,7 @@ def get_policy(name=None, export=None):
         ret = send_file(export_policies(pol), export, content_type='text/plain')
 
     g.audit_object.log({"success": True,
-                        'info': u"name = {0!s}, realm = {1!s}, scope = {2!s}".format(name, realm, scope)})
+                        'info': "name = {0!s}, realm = {1!s}, scope = {2!s}".format(name, realm, scope)})
     return ret
 
 
@@ -393,7 +396,7 @@ def import_policy_api(filename=None):
     """
     policy_file = request.files['file']
     file_contents = ""
-    # In case of form post requests, it is a "instance" of FieldStorage
+    # In case of form post requests, it is an "instance" of FieldStorage
     # i.e. the Filename is selected in the browser and the data is
     # transferred
     # in an iframe. see: http://jquery.malsup.com/form/#sample4
@@ -417,7 +420,7 @@ def import_policy_api(filename=None):
 
     policy_num = import_policies(file_contents=file_contents)
     g.audit_object.log({"success": True,
-                        'info': u"imported {0:d} policies from file {1!s}".format(
+                        'info': "imported {0:d} policies from file {1!s}".format(
                             policy_num, filename)})
 
     return send_result(policy_num)
@@ -501,7 +504,7 @@ def check_policy_api():
         policy_names = []
         for pol in policies:
             policy_names.append(pol.get("name"))
-        g.audit_object.log({'info': u"allowed by policy {0!s}".format(policy_names)})
+        g.audit_object.log({'info': "allowed by policy {0!s}".format(policy_names)})
     else:
         res["allowed"] = False
         res["info"] = "No policies found"
@@ -549,7 +552,7 @@ def get_policy_defs(scope=None):
             "comparators": comparator_descriptions,
         }
     elif scope == 'pinodes':
-        result = get_privacyidea_nodes()
+        result = get_privacyidea_node_names()
     else:
         static_pol = get_static_policy_definitions()
         dynamic_pol = get_dynamic_policy_definitions()

@@ -3,7 +3,7 @@ This test file tests the lib.config
 
 The lib.config only depends on the database model.
 """
-from privacyidea.models import Config, PRIVACYIDEA_TIMESTAMP, save_config_timestamp, db
+from privacyidea.models import Config, save_config_timestamp, db, NodeName
 from .base import MyTestCase
 from privacyidea.lib.config import (get_resolver_list,
                                     get_resolver_classes,
@@ -21,11 +21,13 @@ from privacyidea.lib.config import (get_resolver_list,
                                     get_token_classes, get_token_prefix,
                                     get_machine_resolver_class_dict,
                                     get_privacyidea_node, get_privacyidea_nodes,
-                                    this, get_config_object, invalidate_config_object)
+                                    this, get_config_object, invalidate_config_object,
+                                    get_multichallenge_enrollable_tokentypes,
+                                    get_email_validators,
+                                    check_node_uuid_exists)
 from privacyidea.lib.resolvers.PasswdIdResolver import IdResolver as PWResolver
 from privacyidea.lib.tokens.hotptoken import HotpTokenClass
 from privacyidea.lib.tokens.totptoken import TotpTokenClass
-from flask import current_app
 import importlib
 
 
@@ -223,11 +225,20 @@ class ConfigTestCase(MyTestCase):
         self.assertEqual(a, None)
 
     def test_07_node_names(self):
+        # if there is no node in the nodename table, the check fails
+        self.assertFalse(check_node_uuid_exists("8e4272a9-9037-40df-8aa3-976e4a04b5a9"))
+
+        db.session.add(NodeName(id="8e4272a9-9037-40df-8aa3-976e4a04b5a9", name="Node1"))
+        db.session.add(NodeName(id="d1d7fde6-330f-4c12-88f3-58a1752594bf", name="Node2"))
+        db.session.commit()
+
+        self.assertTrue(check_node_uuid_exists("8e4272a9-9037-40df-8aa3-976e4a04b5a9"))
+
         node = get_privacyidea_node()
         self.assertEqual(node, "Node1")
         nodes = get_privacyidea_nodes()
-        self.assertTrue("Node1" in nodes)
-        self.assertTrue("Node2" in nodes)
+        self.assertIn({"uuid": "8e4272a9-9037-40df-8aa3-976e4a04b5a9", "name": "Node1"}, nodes, nodes)
+        self.assertIn({"uuid": "d1d7fde6-330f-4c12-88f3-58a1752594bf", "name": "Node2"}, nodes, nodes)
 
     def test_08_config_object(self):
         obj1 = get_config_object()
@@ -249,7 +260,7 @@ class ConfigTestCase(MyTestCase):
         # Ensure we have a config object
         get_config_object()
         # Add a config option *without invalidating the config*
-        db.session.add(Config(Key=u"some_key", Value=u"some_value"))
+        db.session.add(Config(Key="some_key", Value="some_value"))
         save_config_timestamp(False)
         db.session.commit()
         # The request-local config does not know about the new config option
@@ -258,3 +269,21 @@ class ConfigTestCase(MyTestCase):
         invalidate_config_object()
         # ... and the new config object knows!
         self.assertEqual(get_from_config("some_key", "default"), "some_value")
+
+    def test_10_enrollable_tokentypes(self):
+        ttypes = get_multichallenge_enrollable_tokentypes()
+        self.assertIn("hotp", ttypes)
+        self.assertIn("totp", ttypes)
+        self.assertIn("sms", ttypes)
+        self.assertIn("email", ttypes)
+        self.assertIn("push", ttypes)
+        self.assertNotIn("tan", ttypes)
+        self.assertNotIn("daplug", ttypes)
+        self.assertNotIn("paper", ttypes)
+
+    def test_11_get_email_validators(self):
+        ev = get_email_validators()
+        self.assertEqual(['tests.testdata.gmailvalidator', 'privacyidea.lib.utils.emailvalidation'], list(ev.keys()))
+        validate_email = get_email_validators().get("privacyidea.lib.utils.emailvalidation")
+        self.assertTrue(validate_email("valid@email.com"))
+        self.assertFalse(validate_email("invalid@email.k"))

@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-#
-#
 # 2016-04-08 Cornelius Kölbel <cornelius@privacyidea.org>
 #            Avoid consecutive if-statements
 # 2014-10-03 fix getUsername function
@@ -46,7 +43,6 @@ import os
 import logging
 import crypt
 import codecs
-import six
 
 from privacyidea.lib.utils import to_bytes, convert_column_to_unicode
 from .UserIdResolver import UserIdResolver
@@ -195,9 +191,6 @@ class IdResolver (UserIdResolver):
         :rtype: bool
         """
         log.info("checking password for user uid {0!s}".format(uid))
-        if six.PY2:
-            # crypt needs bytes in python 2
-            password = to_bytes(password)
         cryptedpasswd = self.passDict[uid]
         log.debug("We found the encrypted pass {0!s} for uid {1!s}".format(cryptedpasswd, uid))
         if cryptedpasswd:

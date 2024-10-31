@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2017-03-30   Friedrich Weber <friedrich.weber@netknights.it>
 #               First ideas for a user cache to improve performance
 #
@@ -74,7 +72,7 @@ def get_cache_time():
     try:
         seconds = int(get_from_config(EXPIRATION_SECONDS, '0'))
     except ValueError:
-        log.info(u"Non-Integer value stored in system config {0!s}".format(EXPIRATION_SECONDS))
+        log.info("Non-Integer value stored in system config {0!s}".format(EXPIRATION_SECONDS))
 
     return datetime.timedelta(seconds=seconds)
 
@@ -103,7 +101,7 @@ def delete_user_cache(resolver=None, username=None, expired=None):
                                      expired=expired)
     rowcount = db.session.query(UserCache).filter(filter_condition).delete()
     db.session.commit()
-    log.info(u'Deleted {} entries from the user cache (resolver={!r}, username={!r}, expired={!r})'.format(
+    log.info('Deleted {} entries from the user cache (resolver={!r}, username={!r}, expired={!r})'.format(
         rowcount, resolver, username, expired
     ))
     return rowcount
@@ -121,9 +119,9 @@ def add_to_cache(username, used_login, resolver, user_id):
     """
     if is_cache_enabled():
         timestamp = datetime.datetime.now()
-        record = UserCache(username, used_login, resolver, user_id, timestamp)
-        log.debug(u'Adding record to cache: ({!r}, {!r}, {!r}, {!r}, {!r})'.format(
+        log.debug('Adding record to cache: ({!r}, {!r}, {!r}, {!r}, {!r})'.format(
             username, used_login, resolver, user_id, timestamp))
+        record = UserCache(username, used_login, resolver, user_id, timestamp)
         record.save()
 
 
@@ -186,7 +184,7 @@ def cache_username(wrapped_function, userid, resolvername):
     result = retrieve_latest_entry(filter_conditions)
     if result:
         username = result.username
-        log.debug(u'Found username of {!r}/{!r} in cache: {!r}'.format(userid, resolvername, username))
+        log.debug('Found username of {!r}/{!r} in cache: {!r}'.format(userid, resolvername, username))
         return username
     else:
         # record was not found in the cache
@@ -209,7 +207,7 @@ def user_init(wrapped_function, self):
         resolvers = [self.resolver]
     else:
         # In order to query the user cache, we need to find out the resolver
-        resolvers = self.get_ordererd_resolvers()
+        resolvers = self.get_ordered_resolvers()
     for resolvername in resolvers:
         # If we could figure out a resolver, we can query the user cache
         filter_conditions = create_filter(used_login=self.used_login, resolver=resolvername)
@@ -241,4 +239,3 @@ def user_init(wrapped_function, self):
     if self.login and self.resolver and self.uid and self.used_login:
         # We only cache complete sets!
         add_to_cache(self.login, self.used_login, self.resolver, self.uid)
-

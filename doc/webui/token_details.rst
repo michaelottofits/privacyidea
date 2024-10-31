@@ -1,19 +1,23 @@
+:orphan:
+
 .. _token_details:
 
 Functionality of the Tokens view
-===============================
+================================
 
-Selecting a token from the list presents a detailed overview on the properties
-of the token token and also let the
-administrator or a privileged user perform specific tasks for this token.
+Selecting a token from the list presents a detailed overview of the properties
+of the token token and also let the administrator or a privileged user perform specific tasks for this token.
 
-.. figure:: images/token-detail.png
+.. figure:: images/token_details.png
    :width: 500
 
    *Token Detail*
 
-At the bottom you see the assigned user. You can click on the username and
+Below the token attributes you see the assigned user. You can click on the username and
 change to the :ref:`user_details`.
+
+Under the user assignment, the token can be added to or removed from a container. Clicking on the container serial
+redirects to the container details (:ref:`container_functionality`).
 
 Lost token
 ----------
@@ -68,8 +72,11 @@ You can change the following token settings.
 
 **TokenDesc**
 
-   The token description is also displayed in the tokenview. You can 
-   set a description to make it easier to identify a token.
+   The token description is also displayed in the tokenview. You can
+   set a description to make it easier to identify a token. The token
+   description will be truncated to fit into the database column (80 characters).
+
+
 
 .. _countwindow:
 
@@ -78,10 +85,10 @@ You can change the following token settings.
    The ``CountWindow``  is the look ahead window of event based tokens.
    If the user pressed the button on an event based token the counter
    in the token is increased. If the user does not use this otp value
-   to authenticate, the server does not know, that the counter in the 
-   token was increased. 
+   to authenticate, the server does not know, that the counter in the
+   token was increased.
    This way the counter in the token can get
-   out of sync with the server. 
+   out of sync with the server.
 
 .. index:: syncwindow, out of sync
 
@@ -89,7 +96,7 @@ You can change the following token settings.
 
    If a token was out of sync (see ``CountWindow``), then it needs to
    be synchronized. This is done by entering two consecutive OTP values.
-   The server searches these two values within the next ``CountWindow`` 
+   The server searches these two values within the next ``CountWindow``
    (default 1000) values.
 
 .. index:: OTP length
@@ -108,7 +115,7 @@ You can change the following token settings.
 
 **Tokeninfo - Auth max**
 
-   The administrator can set a value how often this token 
+   The administrator can set a value how often this token
    may be used for authentication. If the number of authentication
    try exceed this value, the token can not be used, until this
    ``Auth max`` value is increased.
@@ -128,8 +135,8 @@ You can change the following token settings.
 **Tokeninfo - Validity**
 
    A timestamp can be set. The token can only be used within the specified time.
-  
-.. note:: This way you can create temporary tokens for guests or 
+
+.. note:: This way you can create temporary tokens for guests or
    short time or season employees.
 
 Resync Token
@@ -137,7 +144,7 @@ Resync Token
 
 .. index:: resync token
 
-The administrator can select one token and then enter two consecutive 
+The administrator can select one token and then enter two consecutive
 OTP values to resynchonize the token if it was out of sync.
 
 Set token realm
@@ -167,7 +174,7 @@ the token will be assigned.
 When enrolling a token, you can select the token type and according to the
 token type other necessary information.
 
-.. figure:: images/token-enroll.png
+.. figure:: images/token_enroll.png
    :width: 500
 
    *Token enrollment dialog*
@@ -185,6 +192,17 @@ Unassign
 
 In the token details view you can unassign the token. After that, the token
 can be assigned to a new user.
+
+Add to Container
+----------------
+
+A token can be added to a container in the token details view and during the enrollment. You can either create a new
+container or select an existing container from a drop-down list.
+
+Remove from Container
+---------------------
+
+A token can be removed from a container in the token details view. Afterward, the token can be added to a new container.
 
 Enable
 ------

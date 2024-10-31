@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA
 #  Aug 12, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -94,14 +92,14 @@ class RegistrationTokenClass(PasswordTokenClass):
 
     """
 
-    password_detail_key = "registrationcode"
+    password_detail_key = "registrationcode"  # nosec B105 # key name
 
     def __init__(self, aToken):
         PasswordTokenClass.__init__(self, aToken)
         self.hKeyRequired = False
         self.otp_len = DEFAULT_LENGTH
         self.otp_contents = DEFAULT_CONTENTS
-        self.set_type(u"registration")
+        self.set_type("registration")
 
     @staticmethod
     def get_class_type():

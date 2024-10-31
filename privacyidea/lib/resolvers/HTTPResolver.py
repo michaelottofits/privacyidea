@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  Mar, 12 2020 Bruno Cascio
 #  http://www.privacyidea.org
 #
@@ -31,9 +29,8 @@ from .UserIdResolver import UserIdResolver
 import requests
 import logging
 import json
-from six.moves.urllib.parse import urlencode
+from urllib.parse import urlencode
 from pydash import get
-from privacyidea.api.lib.utils import getParam
 
 ENCODING = "utf-8"
 
@@ -203,9 +200,9 @@ class HTTPResolver(UserIdResolver):
         errorResponse = json.loads(param.get('errorResponse', '{}'))
 
         if method == "post":
-            httpResponse = requests.post(endpoint, json=requestMappingJSON, headers=headers)
+            httpResponse = requests.post(endpoint, json=requestMappingJSON, headers=headers, timeout=60)
         else:
-            httpResponse = requests.get(endpoint, urlencode(requestMappingJSON), headers=headers)
+            httpResponse = requests.get(endpoint, urlencode(requestMappingJSON), headers=headers, timeout=60)
 
         # Raises HTTPError, if one occurred.
         httpResponse.raise_for_status()

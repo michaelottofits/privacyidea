@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  privacyIDEA
 #  Jul 18, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -22,6 +20,7 @@ from privacyidea.lib.applications import MachineApplicationBase
 from privacyidea.lib.utils import hexlify_and_unicode
 from privacyidea.lib.crypto import geturandom
 from privacyidea.lib.token import get_tokens
+from privacyidea.lib.policy import TYPE
 import logging
 log = logging.getLogger(__name__)
 
@@ -39,8 +38,10 @@ class MachineApplication(MachineApplicationBase):
     @staticmethod
     def get_authentication_item(token_type,
                                 serial,
-                                challenge=None, options=None,
-                                filter_param=None):
+                                challenge=None,
+                                options=None,
+                                filter_param=None,
+                                user_agent=None):
         """
         :param token_type: the type of the token. At the moment
                            we only support yubikeys, tokentype "TOTP".
@@ -86,5 +87,9 @@ class MachineApplication(MachineApplicationBase):
         """
         returns a dictionary with a list of required and optional options
         """
-        return {'required': [],
-                'optional': ['slot', 'partition']}
+        options = {"totp":
+                       {'slot': {'type': TYPE.INT,
+                                 'value': [0, 1, 2, 3, 4, 5, 6, 7]},
+                        'partition': {'type': TYPE.STRING}}
+                   }
+        return options

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #  privacyIDEA is a fork of LinOTP
 #  May 08, 2014 Cornelius Kölbel
 #  License:  AGPLv3
@@ -150,6 +149,6 @@ class mTimeOtp(object):
         if key is None:
             key = self.key
 
-        vhash = u"{0:d}{1!s}{2!s}".format(counter, key, pin)
-        motp = md5(to_bytes(vhash)).hexdigest()[:self.digits]
+        vhash = "{0:d}{1!s}{2!s}".format(counter, key, pin)
+        motp = md5(to_bytes(vhash)).hexdigest()[:self.digits]  # nosec B324 # md5 used in mOTP algorithm
         return to_unicode(motp)

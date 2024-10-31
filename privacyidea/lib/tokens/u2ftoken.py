@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2018-02-13 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Allow expired attestation certificate
 #  2017-04-18 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -45,7 +43,7 @@ from privacyidea.lib.error import ValidateError, PolicyError, ParameterError
 from privacyidea.lib.policy import SCOPE, GROUP, ACTION, get_action_values_from_options
 from privacyidea.lib.policy import Match
 from privacyidea.lib.challenge import get_challenges
-from privacyidea.lib.utils import is_true, hexlify_and_unicode, to_unicode
+from privacyidea.lib.utils import is_true, hexlify_and_unicode, to_unicode, convert_imagefile_to_dataimage
 import binascii
 import json
 
@@ -188,10 +186,11 @@ the signatureData and clientData returned by the U2F device in the *u2fResult*:
 #
 # The solokeys image is copyright (C) 2020 Solokeys. License: CC-BY-SA 4.0
 #
-IMAGES = {"yubico": "static/img/FIDO-U2F-Security-Key-444x444.png",
-          "plug-up": "static/img/plugup.jpg",
-          "u2fzero.com": "static/img/u2fzero.png",
-          "solokeys": "static/img/solokeys.png"}
+# The image is a relative file system path.
+IMAGES = {"yubico": "privacyidea/static/img/FIDO-U2F-Security-Key-444x444.png",
+          "plug-up": "privacyidea/static/img/plugup.jpg",
+          "u2fzero.com": "privacyidea/static/img/u2fzero.png",
+          "solokeys": "privacyidea/static/img/solokeys.png"}
 
 U2F_Version = "U2F_V2"
 
@@ -246,7 +245,7 @@ class U2fTokenClass(TokenClass):
         """
         res = {'type': 'u2f',
                'title': 'U2F Token',
-               'description': 'U2F: Enroll a U2F token.',
+               'description': _('U2F: Enroll a U2F token.'),
                'init': {},
                'config': {},
                'user':  ['enroll'],
@@ -260,8 +259,10 @@ class U2fTokenClass(TokenClass):
                                      "trusting the registered U2F tokens.")},
                        ACTION.CHALLENGETEXT: {
                            'type': 'str',
-                           'desc': _('Use an alternate challenge text for telling the '
-                                     'user to confirm with his U2F device.')
+                           'desc': _('Use an alternative challenge text for telling the '
+                                     'user to confirm with his U2F device. You can also '
+                                     'use tags for automated replacement. Check out the '
+                                     'documentation for more details.')
                        }
                    },
                    SCOPE.AUTHZ: {
@@ -314,7 +315,7 @@ class U2fTokenClass(TokenClass):
         :type db_token: DB object
         """
         TokenClass.__init__(self, db_token)
-        self.set_type(u"u2f")
+        self.set_type("u2f")
         self.hKeyRequired = False
 
     def update(self, param, reset_failcount=True):
@@ -336,7 +337,7 @@ class U2fTokenClass(TokenClass):
         elif reg_data and self.token.rollout_state == ROLLOUTSTATE.CLIENTWAIT:
             attestation_cert, user_pub_key, key_handle, \
                 signature, automatic_description = parse_registration_data(reg_data,
-                                                                 verify_cert=verify_cert)
+                                                                           verify_cert=verify_cert)
             client_data = getParam(param, "clientdata", required)
             client_data_str = url_decode(client_data)
             app_id = self.get_tokeninfo("appId", "")
@@ -387,8 +388,7 @@ class U2fTokenClass(TokenClass):
 
         elif self.token.rollout_state == "":
             # This is the second step of the init request, the clientwait rollout state has been reset
-            response_detail["u2fRegisterResponse"] = {"subject":
-                                                          self.token.description}
+            response_detail["u2fRegisterResponse"] = {"subject": self.token.description}
 
         return response_detail
 
@@ -440,7 +440,7 @@ class U2fTokenClass(TokenClass):
         message = get_action_values_from_options(SCOPE.AUTH,
                                                  "{0!s}_{1!s}".format(self.get_class_type(),
                                                                       ACTION.CHALLENGETEXT),
-                                                 options)or _(u'Please confirm with your U2F token ({0!s})').format(
+                                                 options) or _('Please confirm with your U2F token ({0!s})').format(
             self.token.description)
 
         validity = int(get_from_config('DefaultChallengeValidityTime', 120))
@@ -483,10 +483,11 @@ class U2fTokenClass(TokenClass):
                             "keyHandle": key_handle_url}
 
         image_url = IMAGES.get(self.token.description.lower().split()[0], "")
+        dataimage = convert_imagefile_to_dataimage(image_url) if image_url else ""
         reply_dict = {"attributes": {"u2fSignRequest": u2f_sign_request,
                                      "hideResponseInput": self.client_mode != CLIENTMODE.INTERACTIVE,
-                                     "img": image_url},
-                      "image": image_url}
+                                     "img": dataimage},
+                      "image": dataimage}
 
         return True, message, db_challenge.transaction_id, reply_dict
 
@@ -518,7 +519,7 @@ class U2fTokenClass(TokenClass):
                 return ret
             if clientdata_dict.get("typ") != "navigator.id.getAssertion":
                 raise ValidateError("Incorrect navigator.id")
-            #client_origin = clientdata_dict.get("origin")
+            # client_origin = clientdata_dict.get("origin")
             signaturedata = url_decode(signaturedata)
             signaturedata_hex = hexlify_and_unicode(signaturedata)
             user_presence, counter, signature = parse_response_data(
@@ -550,9 +551,8 @@ class U2fTokenClass(TokenClass):
                                   user_object=self.user if self.user else None)
                             .action_values(unique=False)
                     ):
-                        log.warning(
-                            "The U2F device {0!s} is not allowed to authenticate due to policy restriction"
-                                .format(self.token.serial))
+                        log.warning("The U2F device {0!s} is not allowed to authenticate "
+                                    "due to policy restriction".format(self.token.serial))
                         raise PolicyError("The U2F device is not allowed "
                                           "to authenticate due to policy "
                                           "restriction.")
@@ -589,7 +589,7 @@ class U2fTokenClass(TokenClass):
         facet_list.append(app_id)
 
         log.debug("Sending facets lists for appId {0!s}: {1!s}".format(app_id,
-                                                             facet_list))
+                                                                       facet_list))
         res = {"trustedFacets": [{"version": {"major": 1,
                                               "minor": 0},
                                   "ids": facet_list

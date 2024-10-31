@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #  privacyIDEA is a fork of LinOTP
 #
 #  2018-12-14 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -120,7 +119,7 @@ def save_resolver(params):
     # Everything passed. So lets actually create the resolver in the DB
     if update_resolver:
         resolver_id = Resolver.query.filter(func.lower(Resolver.name) ==
-                                  resolvername.lower()).first().id
+                                            resolvername.lower()).first().id
     else:
         resolver = Resolver(params.get("resolver"),
                             params.get("type"))
@@ -300,7 +299,7 @@ def get_resolver_class(resolver_type):
 def get_resolver_type(resolvername):
     """
     return the type of a resolvername
-    
+
     :param resolvername: THe name of the resolver
     :return: The type of the resolver
     :rtype: string
@@ -382,6 +381,11 @@ def import_resolver(data, name=None):
     #  doesn't check the input) or "loadConfig()" (which also doesn't check the
     #  parameter, at least for LDAP/SQL-resolver).
     log.debug('Import resolver config: {0!s}'.format(data))
+
+    # Check for old style export type where resolvers were given as a list
+    if isinstance(data, list):
+        data = {x.get("resolvername"): x for x in data}
+
     for res_name, res_data in data.items():
         if name and name != res_name:
             continue

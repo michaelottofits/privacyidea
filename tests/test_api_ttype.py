@@ -1,10 +1,12 @@
-# -*- coding: utf-8 -*-
+from privacyidea.lib.challenge import get_challenges
+from privacyidea.lib.framework import get_app_local_store
+from privacyidea.lib.tokenclass import CHALLENGE_SESSION
 from .base import MyApiTestCase
 from privacyidea.lib.user import (User)
 from privacyidea.lib.config import (set_privacyidea_config)
 from privacyidea.lib.token import (get_tokens, init_token, remove_token)
 from privacyidea.lib.policy import (SCOPE, set_policy, delete_policy)
-from privacyidea.lib.smsprovider.SMSProvider import set_smsgateway, delete_smsgateway
+from privacyidea.lib.smsprovider.SMSProvider import set_smsgateway
 from privacyidea.lib.smsprovider.FirebaseProvider import FIREBASE_CONFIG
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
@@ -16,13 +18,11 @@ from privacyidea.lib.tokens.pushtoken import (PUSH_ACTION,
                                               PUBLIC_KEY_SERVER,
                                               POLL_ONLY)
 from privacyidea.lib.utils import b32encode_and_unicode
-from datetime import datetime, timedelta
-from pytz import utc
-from base64 import b32decode, b32encode
+from datetime import datetime
+from base64 import b32encode
 import mock
 import responses
-from google.oauth2 import service_account
-from .test_lib_tokens_push import _create_credential_mock
+from .test_lib_tokens_push import _check_firebase_params, _create_credential_mock
 
 
 PWFILE = "tests/testdata/passwords"
@@ -31,10 +31,6 @@ DICT_FILE = "tests/testdata/dictionary"
 FIREBASE_FILE = "tests/testdata/firebase-test.json"
 CLIENT_FILE = "tests/testdata/google-services.json"
 FB_CONFIG_VALS = {
-    FIREBASE_CONFIG.API_KEY: "1",
-    FIREBASE_CONFIG.APP_ID: "2",
-    FIREBASE_CONFIG.PROJECT_NUMBER: "3",
-    FIREBASE_CONFIG.PROJECT_ID: "test-123456",
     FIREBASE_CONFIG.JSON_CONFIG: FIREBASE_FILE}
 REGISTRATION_URL = "http://test/ttype/push"
 TTL = "10"
@@ -69,7 +65,7 @@ class TtypeAPITestCase(MyApiTestCase):
                                            method='GET'):
             res = self.app.full_dispatch_request()
             self.assertEqual(res.status_code, 200)
-            self.assertEqual(res.mimetype, u'application/fido.trusted-apps+json')
+            self.assertEqual(res.mimetype, 'application/fido.trusted-apps+json')
             data = res.json
             self.assertTrue("trustedFacets" in data)
 
@@ -96,6 +92,7 @@ class TtypeAPITestCase(MyApiTestCase):
                                                  "session": "12345"}):
             res = self.app.full_dispatch_request()
             self.assertTrue(res.status_code == 400, res.status_code)
+
 
 class TtypePushAPITestCase(MyApiTestCase):
     """
@@ -161,7 +158,7 @@ class TtypePushAPITestCase(MyApiTestCase):
             self.assertEqual(error.get("code"), 303)
 
         r = set_smsgateway(self.firebase_config_name,
-                           u'privacyidea.lib.smsprovider.FirebaseProvider.FirebaseProvider',
+                           'privacyidea.lib.smsprovider.FirebaseProvider.FirebaseProvider',
                            "myFB", FB_CONFIG_VALS)
         self.assertTrue(r > 0)
         set_policy("push1", scope=SCOPE.ENROLL,
@@ -184,9 +181,6 @@ class TtypePushAPITestCase(MyApiTestCase):
             self.assertTrue("pushurl" in detail)
             # check that the new URL contains the serial number
             self.assertTrue("&serial=PIPU" in detail.get("pushurl").get("value"))
-            self.assertTrue("appid=" in detail.get("pushurl").get("value"))
-            self.assertTrue("appidios=" in detail.get("pushurl").get("value"))
-            self.assertTrue("apikeyios=" in detail.get("pushurl").get("value"))
             self.assertFalse("otpkey" in detail)
             enrollment_credential = detail.get("enrollment_credential")
 
@@ -245,11 +239,11 @@ class TtypePushAPITestCase(MyApiTestCase):
             toks = get_tokens(serial=serial)
             self.assertEqual(len(toks), 1)
             token_obj = toks[0]
-            self.assertEqual(token_obj.token.rollout_state, u"enrolled")
+            self.assertEqual(token_obj.token.rollout_state, "enrolled")
             self.assertTrue(token_obj.token.active)
             tokeninfo = token_obj.get_tokeninfo()
             self.assertEqual(tokeninfo.get("public_key_smartphone"), self.smartphone_public_key_pem_urlsafe)
-            self.assertEqual(tokeninfo.get("firebase_token"), u"firebaseT")
+            self.assertEqual(tokeninfo.get("firebase_token"), "firebaseT")
             self.assertEqual(tokeninfo.get("public_key_server").strip().strip("-BEGIN END RSA PUBLIC KEY-").strip(),
                              pubkey)
             # The token should also contain the firebase config
@@ -259,7 +253,7 @@ class TtypePushAPITestCase(MyApiTestCase):
 
     def test_02_api_push_poll(self):
         r = set_smsgateway(self.firebase_config_name,
-                           u'privacyidea.lib.smsprovider.FirebaseProvider.FirebaseProvider',
+                           'privacyidea.lib.smsprovider.FirebaseProvider.FirebaseProvider',
                            "myFB", FB_CONFIG_VALS)
         self.assertGreater(r, 0)
 
@@ -302,16 +296,16 @@ class TtypePushAPITestCase(MyApiTestCase):
 
         # first create a signature
         ts = datetime.utcnow().isoformat()
-        sign_string = u"{serial}|{timestamp}".format(serial=serial, timestamp=ts)
+        sign_string = "{serial}|{timestamp}".format(serial=serial, timestamp=ts)
         sig = self.smartphone_private_key.sign(sign_string.encode('utf8'),
                                                padding.PKCS1v15(),
                                                hashes.SHA256())
         # now check that we receive the challenge when polling
         with self.app.test_request_context('/ttype/push',
                                            method='GET',
-                                           data={"serial": serial,
-                                                 "timestamp": ts,
-                                                 "signature": b32encode(sig)}):
+                                           query_string={"serial": serial,
+                                                         "timestamp": ts,
+                                                         "signature": b32encode(sig)}):
             res = self.app.full_dispatch_request()
 
             # check that the serial was set in flask g (via before_request in ttype.py)
@@ -400,11 +394,11 @@ class TtypePushAPITestCase(MyApiTestCase):
             toks = get_tokens(serial=serial)
             self.assertEqual(len(toks), 1)
             token_obj = toks[0]
-            self.assertEqual(token_obj.token.rollout_state, u"enrolled")
+            self.assertEqual(token_obj.token.rollout_state, "enrolled")
             self.assertTrue(token_obj.token.active)
             tokeninfo = token_obj.get_tokeninfo()
             self.assertEqual(tokeninfo.get("public_key_smartphone"), self.smartphone_public_key_pem_urlsafe)
-            self.assertEqual(tokeninfo.get("firebase_token"), u"")
+            self.assertEqual(tokeninfo.get("firebase_token"), "")
             self.assertEqual(tokeninfo.get("public_key_server").strip().strip("-BEGIN END RSA PUBLIC KEY-").strip(),
                              pubkey)
             # The token should also contain the firebase config
@@ -414,3 +408,96 @@ class TtypePushAPITestCase(MyApiTestCase):
         remove_token(serial)
         # remove the policy
         delete_policy("push1")
+
+    def test_04_api_poll_declined_chal(self):
+        self.setUp_user_realms()
+        # create FireBase Service and policies
+        set_smsgateway(self.firebase_config_name,
+                       'privacyidea.lib.smsprovider.FirebaseProvider.FirebaseProvider',
+                       "myFB", FB_CONFIG_VALS)
+        set_policy("push_config", scope=SCOPE.ENROLL,
+                   action=f"{PUSH_ACTION.FIREBASE_CONFIG}={self.firebase_config_name}")
+        set_policy("PUSH_ACTION.REGISTRATION_URL", scope=SCOPE.ENROLL,
+                   action=f"{PUSH_ACTION.REGISTRATION_URL}={REGISTRATION_URL}")
+        # create push token
+        tokenobj = self._create_push_token()
+        serial = tokenobj.get_serial()
+
+        # set PIN
+        tokenobj.set_pin("pushpin")
+        tokenobj.add_user(User("cornelius", self.realm1))
+
+        # We mock the ServiceAccountCredentials, since we can not directly contact the Google API
+        with mock.patch('privacyidea.lib.smsprovider.FirebaseProvider.service_account.Credentials'
+                        '.from_service_account_file') as mySA:
+            # alternative: side_effect instead of return_value
+            mySA.from_json_keyfile_name.return_value = _create_credential_mock()
+
+            # add responses, to simulate the communication to firebase
+            responses.add_callback(responses.POST, 'https://fcm.googleapis.com/v1/projects/test-123456/messages:send',
+                                   callback=_check_firebase_params,
+                                   content_type="application/json")
+
+            # Send the first authentication request to trigger the challenge
+            with self.app.test_request_context('/validate/check',
+                                               method='POST',
+                                               data={"user": "cornelius",
+                                                     "realm": self.realm1,
+                                                     "pass": "pushpin"}):
+                res = self.app.full_dispatch_request()
+                self.assertTrue(res.status_code == 200, res)
+                jsonresp = res.json
+                self.assertFalse(jsonresp.get("result").get("value"))
+                self.assertTrue(jsonresp.get("result").get("status"))
+                self.assertEqual(jsonresp.get("detail").get("serial"), tokenobj.token.serial)
+                self.assertTrue("transaction_id" in jsonresp.get("detail"))
+                transaction_id = jsonresp.get("detail").get("transaction_id")
+
+            # Our ServiceAccountCredentials mock has not been called because we use a cached token
+            self.assertEqual(len(mySA.from_json_keyfile_name.mock_calls), 0)
+            self.assertIn(FIREBASE_FILE, get_app_local_store()["firebase_token"])
+
+        # Check if the challenge is sent to the smartphone
+        # So when we check later, if the challenge is still sent, we can be sure, that the
+        # challenge was not answered.
+        timestamp = datetime.utcnow().isoformat()
+        sign_string = f"{tokenobj.token.serial}|{timestamp}"
+        sig = self.smartphone_private_key.sign(sign_string.encode('utf8'),
+                                               padding.PKCS1v15(),
+                                               hashes.SHA256())
+        with self.app.test_request_context('/ttype/push',
+                                           method='GET',
+                                           query_string={"serial": tokenobj.token.serial,
+                                                         "timestamp": timestamp,
+                                                         "signature": b32encode(sig)}):
+            res = self.app.full_dispatch_request()
+            self.assertEqual(res.status_code, 200, res)
+            result = res.json.get("result")
+            value = result.get("value")
+            self.assertEqual(len(value), 1, value)
+
+        # Decline the challenge
+        challengeobject_list = get_challenges(serial=tokenobj.token.serial,
+                                              transaction_id=transaction_id)
+        challenge = challengeobject_list[0]
+        challenge.set_session(CHALLENGE_SESSION.DECLINED)
+        challenge.save()
+
+        # If the challenge is successfully declined, the /ttype/push endpoint
+        # will not send the challenge again.
+        timestamp = datetime.utcnow().isoformat()
+        sign_string = f"{tokenobj.token.serial}|{timestamp}"
+        sig = self.smartphone_private_key.sign(sign_string.encode('utf8'),
+                                               padding.PKCS1v15(),
+                                               hashes.SHA256())
+        with self.app.test_request_context('/ttype/push',
+                                           method='GET',
+                                           query_string={"serial": tokenobj.token.serial,
+                                                         "timestamp": timestamp,
+                                                         "signature": b32encode(sig)}):
+            res = self.app.full_dispatch_request()
+            self.assertEqual(res.status_code, 200, res)
+            result = res.json.get("result")
+            value = result.get("value")
+            self.assertEqual(len(value), 0, value)
+        remove_token(serial=serial)

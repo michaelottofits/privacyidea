@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2015-12-27 Cornelius Kölbel <cornelius@privacyidea.org>
 #             SMTP Server implementation
 #
@@ -17,14 +15,12 @@
 # License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-import six
-from six.moves.urllib.parse import urlparse
-from privacyidea.lib.framework import get_app_config_value
+from urllib.parse import urlparse
 from privacyidea.lib.queue import job, wrap_job, has_job_queue
 from privacyidea.models import SMTPServer as SMTPServerDB
 from privacyidea.lib.crypto import (decryptPassword, encryptPassword,
                                     FAILED_TO_DECRYPT_PASSWORD)
-from privacyidea.lib.utils import fetch_one_resource, to_bytes, to_unicode
+from privacyidea.lib.utils import fetch_one_resource, to_unicode
 from privacyidea.lib.utils.export import (register_import, register_export)
 import logging
 from privacyidea.lib.log import log_with
@@ -118,7 +114,7 @@ class SMTPServer(object):
             mail = smtplib.SMTP(smtp_url.hostname,
                                 port=smtp_url.port or int(config['port']),
                                 timeout=config.get('timeout', TIMEOUT))
-        log.debug(u"submitting message to {0!s}".format(msg["To"]))
+        log.debug("submitting message to {0!s}".format(msg["To"]))
         log.debug("Saying EHLO to mailserver {0!s}".format(config['server']))
         r = mail.ehlo()
         log.debug("mailserver responded with {0!s}".format(r))
@@ -132,11 +128,6 @@ class SMTPServer(object):
             password = decryptPassword(config['password'])
             if password == FAILED_TO_DECRYPT_PASSWORD:
                 password = config['password']
-            # Under Python 2, we pass passwords as bytestrings to get CRAM-MD5 to work.
-            # We add a safeguard config option to disable the conversion.
-            # Under Python 3, we pass passwords as unicode.
-            if six.PY2 and get_app_config_value("PI_SMTP_PASSWORD_AS_BYTES", True):
-                password = to_bytes(password)
             mail.login(config['username'], password)
         r = mail.sendmail(mail_from, recipient, msg.as_string())
         log.info("Mail sent: {0!s}".format(r))
@@ -281,7 +272,7 @@ def list_smtpservers(identifier=None, server=None):
         decrypted_password = decryptPassword(server_obj.config.password)
         # If the database contains garbage, use the empty password as fallback
         if decrypted_password == FAILED_TO_DECRYPT_PASSWORD:
-            decrypted_password = ""
+            decrypted_password = ""  # nosec B105 # reset password in case of error
         res[server_obj.config.identifier] = server_obj.config.get()
         res[server_obj.config.identifier].pop('id')
         res[server_obj.config.identifier].pop('identifier')

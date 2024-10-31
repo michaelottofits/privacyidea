@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2018-08-03 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Allow Pre-Handling events
 #  2016-05-04 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -63,8 +61,8 @@ class event(object):
             # do Pre-Event Handling
             e_handles = self.g.event_config.get_handled_events(self.eventname, position="pre")
             for e_handler_def in e_handles:
-                log.debug(u"Pre-Handling event {eventname} with "
-                          u"{eventDef}".format(eventname=self.eventname,
+                log.debug("Pre-Handling event {eventname} with "
+                          "{eventDef}".format(eventname=self.eventname,
                                               eventDef=e_handler_def))
                 event_handler_name = e_handler_def.get("handlermodule")
                 event_handler = get_handler_object(event_handler_name)
@@ -74,8 +72,8 @@ class event(object):
                            "g": self.g,
                            "handler_def": e_handler_def}
                 if event_handler.check_condition(options=options):
-                    log.debug(u"Pre-Handling event {eventname} with options"
-                              u"{options}".format(eventname=self.eventname,
+                    log.debug("Pre-Handling event {eventname} with options"
+                              "{options}".format(eventname=self.eventname,
                                                   options=options))
                     # create a new audit object for this action
                     event_audit = getAudit(self.g.audit_object.config)
@@ -91,10 +89,13 @@ class event(object):
                     event_audit_data["info"] = e_handler_def.get("name")
                     event_audit.log(event_audit_data)
 
-                    event_handler.do(e_handler_def.get("action"),
-                                     options=options)
+                    result = event_handler.do(e_handler_def.get("action"),
+                                               options=options)
+                    if not result and event_handler.run_details:
+                        event_audit_data["info"] += " ({!s})".format(event_handler.run_details)
+                        event_audit.log(event_audit_data)
                     # set audit object to success
-                    event_audit.log({"success": True})
+                    event_audit.log({"success": result})
                     event_audit.finalize_log()
 
             f_result = func(*args, **kwds)
@@ -102,8 +103,8 @@ class event(object):
             # Post-Event Handling
             e_handles = self.g.event_config.get_handled_events(self.eventname)
             for e_handler_def in e_handles:
-                log.debug(u"Post-Handling event {eventname} with "
-                          u"{eventDef}".format(eventname=self.eventname,
+                log.debug("Post-Handling event {eventname} with "
+                          "{eventDef}".format(eventname=self.eventname,
                                               eventDef=e_handler_def))
                 event_handler_name = e_handler_def.get("handlermodule")
                 event_handler = get_handler_object(event_handler_name)
@@ -114,8 +115,8 @@ class event(object):
                            "response": f_result,
                            "handler_def": e_handler_def}
                 if event_handler.check_condition(options=options):
-                    log.debug(u"Post-Handling event {eventname} with options"
-                              u"{options}".format(eventname=self.eventname,
+                    log.debug("Post-Handling event {eventname} with options"
+                              "{options}".format(eventname=self.eventname,
                                                  options=options))
                     # create a new audit object
                     event_audit = getAudit(self.g.audit_object.config)
@@ -131,12 +132,15 @@ class event(object):
                     event_audit_data["info"] = e_handler_def.get("name")
                     event_audit.log(event_audit_data)
 
-                    event_handler.do(e_handler_def.get("action"),
-                                     options=options)
+                    result = event_handler.do(e_handler_def.get("action"),
+                                               options=options)
+                    if not result and event_handler.run_details:
+                        event_audit_data["info"] += " ({!s})".format(event_handler.run_details)
+                        event_audit.log(event_audit_data)
                     # In case the handler has modified the response
                     f_result = options.get("response")
                     # set audit object to success
-                    event_audit.log({"success": True})
+                    event_audit.log({"success": result})
                     event_audit.finalize_log()
 
             return f_result
@@ -164,6 +168,8 @@ def get_handler_object(handlername):
     from privacyidea.lib.eventhandler.responsemangler import ResponseManglerEventHandler
     from privacyidea.lib.eventhandler.logginghandler import LoggingEventHandler
     from privacyidea.lib.eventhandler.customuserattributeshandler import CustomUserAttributesHandler
+    from privacyidea.lib.eventhandler.webhookeventhandler import WebHookHandler
+    from privacyidea.lib.eventhandler.containerhandler import ContainerEventHandler
     h_obj = None
     if handlername == "UserNotification":
         h_obj = UserNotificationEventHandler()
@@ -183,13 +189,21 @@ def get_handler_object(handlername):
         h_obj = LoggingEventHandler()
     elif handlername == "CustomUserAttributes":
         h_obj = CustomUserAttributesHandler()
+    elif handlername == "WebHook":
+        h_obj = WebHookHandler()
+    elif handlername == "Container":
+        h_obj = ContainerEventHandler()
     return h_obj
 
 
 def enable_event(event_id, enable=True):
     """
-    Enable or disable the and event
+    Enable or disable the event
+
     :param event_id: ID of the event
+    :type event_id: int
+    :param enable: enable or disable the event
+    :type enable: bool
     :return:
     """
     ev = fetch_one_resource(EventHandler, id=event_id)
@@ -225,7 +239,7 @@ def set_event(name=None, event=None, handlermodule=None, action=None, conditions
         action
     :type options: dict
     :param id: The DB id of the event. If the id is given, the event is
-        updated. Otherwise a new entry is generated.
+        updated. Otherwise, a new entry is generated.
     :type id: int
     :param position: The position of the event handler being "post" or "pre"
     :type position: basestring

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2017-02-25 Cornelius Kölbeb <cornelius.koelbel@netknights.it>
 #             Add template functionality
 #  2015-04-22 Cornelius Kölbel <cornelius.koelbel@netknights.it>
@@ -29,17 +27,15 @@ This module is tested in tests/test_lib_caconnector.py
 """
 from privacyidea.lib.error import CAError
 from privacyidea.lib.utils import int_to_hex, to_unicode
-from privacyidea.lib.caconnectors.baseca import BaseCAConnector
+from privacyidea.lib.caconnectors.baseca import BaseCAConnector, AvailableCAConnectors
 from OpenSSL import crypto
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE  # nosec B404
 import yaml
 import datetime
 import shlex
 import re
 import logging
 import os
-from six import string_types
-from six.moves import input
 import traceback
 
 log = logging.getLogger(__name__)
@@ -185,6 +181,8 @@ authorityKeyIdentifier=keyid:always,issuer:always
 
 [ crl_dp_policy ]
 """
+
+AvailableCAConnectors.append("privacyidea.lib.caconnectors.localca.LocalCAConnector")
 
 
 def _get_crl_next_update(filename):
@@ -359,8 +357,8 @@ class LocalCAConnector(BaseCAConnector):
         :param options: Additional options like the validity time or the
             template or spkac=1
         :type options: dict
-        :return: Returns the certificate object
-        :rtype: X509
+        :return: Returns a return value (0) and the certificate object
+        :rtype: (int, X509)
         """
         # Sign the certificate for one year
         options = options or {}
@@ -424,7 +422,8 @@ class LocalCAConnector(BaseCAConnector):
                                                           certificate_filename))
         # run the command
         args = shlex.split(cmd)
-        p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=workingdir, universal_newlines=True)
+        # the command is configured by the administrator: CA key, CA cert, number of days, the config file
+        p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=workingdir, universal_newlines=True)  # nosec B603
         result, error = p.communicate()
         if p.returncode != 0:  # pragma: no cover
             # Some error occurred
@@ -439,26 +438,7 @@ class LocalCAConnector(BaseCAConnector):
         else:
             filetype = crypto.FILETYPE_PEM
         cert_obj = crypto.load_certificate(filetype, certificate)
-        return cert_obj
-
-    def view_pending_certs(self):
-        """
-        CA Manager approval
-        the token/init of would not create a certificate but a
-        pending certificate request, that needs to be approved by a
-        CA manager. So we need some kind of approve method.
-        :return:
-        """
-        pass
-
-    def request_cert(self):
-        """
-        create key server side
-        create key on client side
-        via PKCS10
-        :return:
-        """
-        pass
+        return 0, cert_obj
 
     def get_templates(self):
         """
@@ -476,16 +456,10 @@ class LocalCAConnector(BaseCAConnector):
             except EnvironmentError:
                 log.warning("Template file {0!s} for {1!s} not found or "
                             "not permitted.".format(self.template_file, self.name))
-                log.debug(u'{0!s}'.format(traceback.format_exc()))
+                log.debug('{0!s}'.format(traceback.format_exc()))
         return content
 
-    def publish_cert(self):
-        """
-        The certificate might get published somewhere
-        """
-        pass
-
-    def revoke_cert(self, certificate, reason=CRL_REASONS[0]):
+    def revoke_cert(self, certificate, request_id=None, reason=CRL_REASONS[0]):
         """
         Revoke the specified certificate. At this point only the database
         index.txt is updated.
@@ -498,12 +472,14 @@ class LocalCAConnector(BaseCAConnector):
         :return: Returns the serial number of the revoked certificate. Otherwise
             an error is raised.
         """
-        if isinstance(certificate, string_types):
+        if isinstance(certificate, str):
             cert_obj = crypto.load_certificate(crypto.FILETYPE_PEM, certificate)
         elif type(certificate) == crypto.X509:
             cert_obj = certificate
         else:
             raise CAError("Certificate in unsupported format")
+        if reason not in CRL_REASONS:
+            raise CAError("Unsupported revoke reason")
 
         serial = cert_obj.get_serial_number()
         serial_hex = int_to_hex(serial)
@@ -514,7 +490,9 @@ class LocalCAConnector(BaseCAConnector):
                                reason=reason)
         workingdir = self.config.get(ATTR.WORKING_DIR)
         args = shlex.split(cmd)
-        p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=workingdir, universal_newlines=True)
+        # The command is configured by the administrator: CA key, CA cert, config file, certificate,
+        # the revoking reason is fetched earlier
+        p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=workingdir, universal_newlines=True)  # nosec B603
         result, error = p.communicate()
         if p.returncode != 0:  # pragma: no cover
             # Some error occurred
@@ -528,7 +506,7 @@ class LocalCAConnector(BaseCAConnector):
 
         :param publish: Whether the CRL should be published at its CDPs
         :param check_validity: Onle create a new CRL, if the old one is about to
-            expire. Therfore the overlap period and the remaining runtime of
+            expire. Therefore, the overlap period and the remaining runtime of
             the CRL is checked. If the remaining runtime is smaller than the
             overlap period, we recreate the CRL.
         :return: the CRL location or None, if no CRL was created
@@ -559,7 +537,8 @@ class LocalCAConnector(BaseCAConnector):
                                          config=self.config.get(ATTR.OPENSSL_CNF),
                                          CRL=crl)
             args = shlex.split(cmd)
-            p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=workingdir, universal_newlines=True)
+            # The command is configured by the admin: CA key, CA cert, config file and CRL location
+            p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=workingdir, universal_newlines=True)  # nosec B603
             result, error = p.communicate()
             if p.returncode != 0:  # pragma: no cover
                 # Some error occurred
@@ -651,17 +630,17 @@ class LocalCAConnector(BaseCAConnector):
 
         # return the configuration to the upper level, so that the CA
         # connector can be created in the database
-        caparms = {u"caconnector": name,
-                   u"type": u"local",
+        caparms = {"caconnector": name,
+                   "type": "local",
                    ATTR.WORKING_DIR: config.directory,
-                   ATTR.CACERT: u"{0!s}/cacert.pem".format(config.directory),
-                   ATTR.CAKEY: u"{0!s}/cakey.pem".format(config.directory),
+                   ATTR.CACERT: "{0!s}/cacert.pem".format(config.directory),
+                   ATTR.CAKEY: "{0!s}/cakey.pem".format(config.directory),
                    ATTR.CERT_DIR: config.directory,
-                   ATTR.CRL: u"{0!s}/crl.pem".format(config.directory),
+                   ATTR.CRL: "{0!s}/crl.pem".format(config.directory),
                    ATTR.CSR_DIR: config.directory,
                    ATTR.CRL_VALIDITY_PERIOD: config.crl_days,
                    ATTR.CRL_OVERLAP_PERIOD: config.crl_overlap,
-                   ATTR.OPENSSL_CNF: u"{0!s}/openssl.cnf".format(config.directory)
+                   ATTR.OPENSSL_CNF: "{0!s}/openssl.cnf".format(config.directory)
                    }
         return caparms
 
@@ -708,7 +687,8 @@ def _init_ca(config):
     print("Running command...")
     print(command)
     args = shlex.split(command)
-    p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=config.directory, universal_newlines=True)
+    # The command is created by the root user at the command line anyways
+    p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=config.directory, universal_newlines=True)  # nosec B603
     result, error = p.communicate()
     if p.returncode != 0:  # pragma: no cover
         # Some error occurred
@@ -722,7 +702,8 @@ def _init_ca(config):
     print("Running command...")
     print(command)
     args = shlex.split(command)
-    p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=config.directory, universal_newlines=True)
+    # The command is created by the root user at the command line anyways
+    p = Popen(args, stdout=PIPE, stderr=PIPE, cwd=config.directory, universal_newlines=True)  # nosec B603
     result, error = p.communicate()
     if p.returncode != 0:  # pragma: no cover
         # Some error occurred

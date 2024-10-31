@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # http://www.privacyidea.org
 # (c) Cornelius Kölbel, privacyidea.org
 #
@@ -67,7 +65,7 @@ def get_eventhandling(eventid=None):
     elif eventid == "handlermodules":
         # TODO: We need to provide a dynamic list of event handlers
         res = ["UserNotification", "Token", "Federation", "Script", "Counter",
-               "RequestMangler", "ResponseMangler", "Logging", "CustomUserAttributes"]
+               "RequestMangler", "ResponseMangler", "Logging", "CustomUserAttributes", "WebHook", "Container"]
     else:
         res = g.event_config.get_event(eventid)
     g.audit_object.log({"success": True})

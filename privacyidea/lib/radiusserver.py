@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #  2017-10-30 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #             Add timeout handling
 #  2016-02-19 Cornelius Kölbel <cornelius@privacyidea.org>
@@ -184,7 +182,7 @@ def list_radiusservers(identifier=None, server=None):
         decrypted_password = decryptPassword(server.config.secret)
         # If the database contains garbage, use the empty password as fallback
         if decrypted_password == FAILED_TO_DECRYPT_PASSWORD:
-            decrypted_password = ""
+            decrypted_password = ""  # nosec B105 # Reset password in case of error
         res[server.config.identifier] = {"server": server.config.server,
                                          "port": server.config.port,
                                          "dictionary": server.config.dictionary,

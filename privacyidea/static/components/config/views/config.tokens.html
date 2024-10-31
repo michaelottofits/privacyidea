@@ -1,7 +1,7 @@
-<div class="row" ng-controller="tokenConfigController">
+<div class="row">
     <div class="col-lg-3">
         <div class="pa-sidebar panel">
-            <ul class="nav nav-pills nav-stacked">
+            <ul class="nav nav-pills nav-stacked nav-capitalize">
                 <li role="presentation"
                     ng-class="{ active: tokentype == 'hotp'}">
                     <a ui-sref="config.tokens({tokentype: 'hotp'})">HOTP</a>
@@ -56,6 +56,10 @@
                 <li role="presentation"
                     ng-class="{ active: tokentype == 'yubikey'}">
                     <a ui-sref="config.tokens({tokentype: 'yubikey'})">Yubikey</a></li>
+                </li>
+                <li role="presentation"
+                    ng-class="{ active: tokentype == 'daypassword'}">
+                    <a ui-sref="config.tokens({tokentype: 'daypassword'})">DayPassword</a>
                 <hr>
                 <li role="presentation">
                         <a target="_external" ng-href="{{ 'https://privacyidea.readthedocs.io/en/v'+

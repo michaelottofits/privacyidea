@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 #    2019-02-12 Cornelius Kölbel <cornelius.koelbel@netknights.it>
 #
 #
@@ -73,8 +71,8 @@ def get_firebase_access_token(config_file_name):
         # is written to the dictionary.
         app_store[fbt][config_file_name] = credentials
         readable_time = credentials.expiry.isoformat() if credentials.expiry else 'Never'
-        log.debug(u"Setting the expiration for {!r} of the new access_token "
-                  u"to {!s}.".format(config_file_name, readable_time))
+        log.debug("Setting the expiration for {!r} of the new access_token "
+                  "to {!s}.".format(config_file_name, readable_time))
 
     return app_store[fbt][config_file_name]
 
@@ -83,12 +81,6 @@ class FIREBASE_CONFIG:
     REGISTRATION_URL = "registration URL"
     TTL = "time to live"
     JSON_CONFIG = "JSON config file"
-    PROJECT_ID = "projectid"
-    PROJECT_NUMBER = "projectnumber"
-    APP_ID = "appid"
-    API_KEY = "apikey"
-    APP_ID_IOS = "appidios"
-    API_KEY_IOS = "apikeyios"
     HTTPS_PROXY = "httpsproxy"
 
 
@@ -158,14 +150,17 @@ class FirebaseProvider(ISMSProvider):
         proxies = {}
         if self.smsgateway.option_dict.get(FIREBASE_CONFIG.HTTPS_PROXY):
             proxies["https"] = self.smsgateway.option_dict.get(FIREBASE_CONFIG.HTTPS_PROXY)
-        url = FIREBASE_URL_SEND.format(self.smsgateway.option_dict.get(FIREBASE_CONFIG.PROJECT_ID))
+        a = self.smsgateway.option_dict.get(FIREBASE_CONFIG.JSON_CONFIG)
+        with open(a) as f:
+            server_config = json.load(f)
+        url = FIREBASE_URL_SEND.format(server_config["project_id"])
         resp = authed_session.post(url, data=json.dumps(fcm_message), headers=headers, proxies=proxies)
 
         if resp.status_code == 200:
             log.debug("Message sent successfully to Firebase service.")
             res = True
         else:
-            log.warning(u"Failed to send message to firebase service: {0!s}".format(resp.text))
+            log.warning("Failed to send message to firebase service: {0!s}".format(resp.text))
 
         return res
 
@@ -182,24 +177,10 @@ class FirebaseProvider(ISMSProvider):
         if server_config:
             if server_config.get("type") != "service_account":
                 raise ConfigAdminError(description="The JSON file is not a valid firebase credentials file.")
-            project_id = self.smsgateway.option_dict.get(FIREBASE_CONFIG.PROJECT_ID)
-            if server_config.get("project_id") != project_id:
-                raise ConfigAdminError(description="The project_id you entered does not match the project_id from the JSON file.")
 
         else:
             raise ConfigAdminError(description="Please check your configuration. Can not load JSON file.")
 
-        # We need at least
-        #         FIREBASE_CONFIG.API_KEY_IOS and FIREBASE_CONFIG.APP_ID_IOS
-        # or
-        #         FIREBASE_CONFIG.API_KEY and FIREBASE_CONFIG.APP_ID
-        android_configured = bool(self.smsgateway.option_dict.get(FIREBASE_CONFIG.APP_ID)) and \
-                             bool(self.smsgateway.option_dict.get(FIREBASE_CONFIG.API_KEY))
-        ios_configured = bool(self.smsgateway.option_dict.get(FIREBASE_CONFIG.APP_ID_IOS)) and \
-                             bool(self.smsgateway.option_dict.get(FIREBASE_CONFIG.API_KEY_IOS))
-        if not android_configured and not ios_configured:
-            raise ConfigAdminError(description="You need to at least configure either app_id and api_key or"
-                                               " app_id_ios and api_key_ios.")
 
     @classmethod
     def parameters(cls):
@@ -213,35 +194,6 @@ class FirebaseProvider(ISMSProvider):
         params = {"options_allowed": False,
                   "headers_allowed": False,
                   "parameters": {
-                      FIREBASE_CONFIG.PROJECT_ID: {
-                          "required": True,
-                          "description": _("The project ID, that the client should use. Get it from your Firebase console.")
-                      },
-                      FIREBASE_CONFIG.PROJECT_NUMBER: {
-                          "required": True,
-                          "description": _(
-                              "The project number, that the client should use. Get it from your Firebase console.")
-                      },
-                      FIREBASE_CONFIG.APP_ID: {
-                          "required": False,
-                          "description": _(
-                              "The App ID, that the Android client should use. Get it from your Firebase console.")
-                      },
-                      FIREBASE_CONFIG.API_KEY: {
-                          "required": False,
-                          "description": _(
-                              "The API Key, that the Android client should use. Get it from your Firebase console.")
-                      },
-                      FIREBASE_CONFIG.APP_ID_IOS:{
-                          "required": False,
-                          "description": _(
-                              "The App ID, that the iOS client should use. Get it from your Firebase console.")
-                      },
-                      FIREBASE_CONFIG.API_KEY_IOS: {
-                          "required": False,
-                          "description": _(
-                              "The API Key, that the iOS client should use. Get it from your Firebase console.")
-                      },
                       FIREBASE_CONFIG.JSON_CONFIG: {
                           "required": True,
                           "description": _("The filename of the JSON config file, that allows privacyIDEA to talk"
